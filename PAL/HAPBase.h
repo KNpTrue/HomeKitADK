@@ -75,7 +75,8 @@ HAP_ENUM_BEGIN(uint8_t, HAPError) {
     kHAPError_InvalidData,    /**< Data has unexpected format. */
     kHAPError_OutOfResources, /**< Out of resources. */
     kHAPError_NotAuthorized,  /**< Insufficient authorization. */
-    kHAPError_Busy            /**< Operation failed temporarily, retry later. */
+    kHAPError_Busy,           /**< Operation failed temporarily, retry later. */
+    kHAPError_InProgress      /**< Operation in progress. */
 } HAP_ENUM_END(uint8_t, HAPError);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

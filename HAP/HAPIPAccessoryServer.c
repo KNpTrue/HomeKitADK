@@ -844,6 +844,9 @@ static int32_t ConvertCharacteristicWriteErrorToStatusCode(HAPError error) {
         case kHAPError_Busy: {
             return kHAPIPAccessoryServerStatusCode_ResourceIsBusy;
         }
+        case kHAPError_InProgress: {
+            HAPFatalError();
+        }
     }
     HAPFatalError();
 }
@@ -1481,6 +1484,9 @@ static int32_t ConvertCharacteristicReadErrorToStatusCode(HAPError error) {
         }
         case kHAPError_Busy: {
             return kHAPIPAccessoryServerStatusCode_ResourceIsBusy;
+        }
+        case kHAPError_InProgress: {
+            HAPFatalError();
         }
     }
     HAPFatalError();
