@@ -493,18 +493,9 @@ static void CloseSession(HAPIPSessionDescriptor* session) {
     }
     if (session->securitySession.isOpen) {
         HAPLogDebug(&logObject, "session:%p:closing security context", (const void*) session);
-        switch (session->securitySession.type) {
-            case kHAPIPSecuritySessionType_HAP: {
-                HAPLogDebug(&logObject, "Closing HAP session.");
-                HAPSessionRelease(HAPNonnull(session->server), &session->securitySession._.hap);
-                HAPRawBufferZero(&session->securitySession, sizeof session->securitySession);
-            } break;
-            case kHAPIPSecuritySessionType_MFiSAP: {
-                HAPLogDebug(&logObject, "Closing MFi SAP session.");
-                HAPRawBufferZero(&session->securitySession, sizeof session->securitySession);
-            } break;
-        }
-        HAPAssert(!session->securitySession.type);
+        HAPLogDebug(&logObject, "Closing HAP session.");
+        HAPSessionRelease(HAPNonnull(session->server), &session->securitySession.session);
+        HAPRawBufferZero(&session->securitySession, sizeof session->securitySession);
         HAPAssert(!session->securitySession.isSecured);
         HAPAssert(!session->securitySession.isOpen);
     }
@@ -534,8 +525,7 @@ static void OpenSecuritySession(HAPIPSessionDescriptor* session) {
     HAPPrecondition(!session->securitySession.isSecured);
 
     HAPLogDebug(&logObject, "Opening HAP session.");
-    session->securitySession.type = kHAPIPSecuritySessionType_HAP;
-    HAPSessionCreate(HAPNonnull(session->server), &session->securitySession._.hap, kHAPTransportType_IP);
+    HAPSessionCreate(HAPNonnull(session->server), &session->securitySession.session, kHAPTransportType_IP);
 
     session->securitySession.isOpen = true;
 }
@@ -570,10 +560,9 @@ static void post_resource(HAPIPSessionDescriptor* session HAP_UNUSED) {
 static void put_prepare(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
 
     HAPError err;
     uint64_t ttl, pid;
@@ -636,10 +625,9 @@ static void write_characteristic_write_response(
         size_t contexts_count) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
 
     HAPError err;
     size_t content_length, mark;
@@ -774,15 +762,14 @@ static void handle_characteristic_subscribe_request(
         const HAPAccessory* acc) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
     HAPPrecondition(chr);
     HAPPrecondition(svc);
     HAPPrecondition(acc);
 
-    HAPAccessoryServerHandleSubscribe(HAPNonnull(session->server), &session->securitySession._.hap, chr, svc, acc);
+    HAPAccessoryServerHandleSubscribe(HAPNonnull(session->server), &session->securitySession.session, chr, svc, acc);
 }
 
 static void handle_characteristic_unsubscribe_request(
@@ -792,15 +779,14 @@ static void handle_characteristic_unsubscribe_request(
         const HAPAccessory* acc) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
     HAPPrecondition(chr);
     HAPPrecondition(svc);
     HAPPrecondition(acc);
 
-    HAPAccessoryServerHandleUnsubscribe(HAPNonnull(session->server), &session->securitySession._.hap, chr, svc, acc);
+    HAPAccessoryServerHandleUnsubscribe(HAPNonnull(session->server), &session->securitySession.session, chr, svc, acc);
 }
 
 static void handle_characteristic_read_request(
@@ -860,10 +846,9 @@ static void handle_characteristic_write_request(
         HAPIPByteBuffer* dataBuffer) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
     HAPPrecondition(characteristic);
     HAPPrecondition(service);
     HAPPrecondition(accessory);
@@ -885,7 +870,7 @@ static void handle_characteristic_write_request(
 
     if (writeContext->ev != kHAPIPEventNotificationState_Undefined) {
         if (HAPCharacteristicReadRequiresAdminPermissions(baseCharacteristic) &&
-            !HAPSessionControllerIsAdmin(&session->securitySession._.hap)) {
+            !HAPSessionControllerIsAdmin(&session->securitySession.session)) {
             writeContext->status = kHAPIPAccessoryServerStatusCode_InsufficientPrivileges;
         } else if (!baseCharacteristic->properties.supportsEventNotification) {
             writeContext->status = kHAPIPAccessoryServerStatusCode_NotificationNotSupported;
@@ -936,13 +921,13 @@ static void handle_characteristic_write_request(
 
     if (writeContext->type != kHAPIPWriteValueType_None) {
         if (HAPCharacteristicWriteRequiresAdminPermissions(baseCharacteristic) &&
-            !HAPSessionControllerIsAdmin(&session->securitySession._.hap)) {
+            !HAPSessionControllerIsAdmin(&session->securitySession.session)) {
             writeContext->status = kHAPIPAccessoryServerStatusCode_InsufficientPrivileges;
             return;
         }
         if ((baseCharacteristic->properties.ip.supportsWriteResponse || writeContext->response) &&
             HAPCharacteristicReadRequiresAdminPermissions(baseCharacteristic) &&
-            !HAPSessionControllerIsAdmin(&session->securitySession._.hap)) {
+            !HAPSessionControllerIsAdmin(&session->securitySession.session)) {
             writeContext->status = kHAPIPAccessoryServerStatusCode_InsufficientPrivileges;
             return;
         }
@@ -981,7 +966,7 @@ static void handle_characteristic_write_request(
                                         HAPNonnull(session->server),
                                         &(const HAPDataCharacteristicWriteRequest) {
                                                 .transportType = kHAPTransportType_IP,
-                                                .session = &session->securitySession._.hap,
+                                                .session = &session->securitySession.session,
                                                 .characteristic = (const HAPDataCharacteristic*) baseCharacteristic,
                                                 .service = service,
                                                 .accessory = accessory,
@@ -1006,7 +991,7 @@ static void handle_characteristic_write_request(
                                     HAPNonnull(session->server),
                                     &(const HAPBoolCharacteristicWriteRequest) {
                                             .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession._.hap,
+                                            .session = &session->securitySession.session,
                                             .characteristic = (const HAPBoolCharacteristic*) baseCharacteristic,
                                             .service = service,
                                             .accessory = accessory,
@@ -1027,7 +1012,7 @@ static void handle_characteristic_write_request(
                                     HAPNonnull(session->server),
                                     &(const HAPUInt8CharacteristicWriteRequest) {
                                             .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession._.hap,
+                                            .session = &session->securitySession.session,
                                             .characteristic = (const HAPUInt8Characteristic*) baseCharacteristic,
                                             .service = service,
                                             .accessory = accessory,
@@ -1048,7 +1033,7 @@ static void handle_characteristic_write_request(
                                     HAPNonnull(session->server),
                                     &(const HAPUInt16CharacteristicWriteRequest) {
                                             .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession._.hap,
+                                            .session = &session->securitySession.session,
                                             .characteristic = (const HAPUInt16Characteristic*) baseCharacteristic,
                                             .service = service,
                                             .accessory = accessory,
@@ -1069,7 +1054,7 @@ static void handle_characteristic_write_request(
                                     HAPNonnull(session->server),
                                     &(const HAPUInt32CharacteristicWriteRequest) {
                                             .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession._.hap,
+                                            .session = &session->securitySession.session,
                                             .characteristic = (const HAPUInt32Characteristic*) baseCharacteristic,
                                             .service = service,
                                             .accessory = accessory,
@@ -1089,7 +1074,7 @@ static void handle_characteristic_write_request(
                                     HAPNonnull(session->server),
                                     &(const HAPUInt64CharacteristicWriteRequest) {
                                             .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession._.hap,
+                                            .session = &session->securitySession.session,
                                             .characteristic = (const HAPUInt64Characteristic*) baseCharacteristic,
                                             .service = service,
                                             .accessory = accessory,
@@ -1114,7 +1099,7 @@ static void handle_characteristic_write_request(
                                     HAPNonnull(session->server),
                                     &(const HAPIntCharacteristicWriteRequest) {
                                             .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession._.hap,
+                                            .session = &session->securitySession.session,
                                             .characteristic = (const HAPIntCharacteristic*) baseCharacteristic,
                                             .service = service,
                                             .accessory = accessory,
@@ -1144,7 +1129,7 @@ static void handle_characteristic_write_request(
                                     HAPNonnull(session->server),
                                     &(const HAPFloatCharacteristicWriteRequest) {
                                             .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession._.hap,
+                                            .session = &session->securitySession.session,
                                             .characteristic = (const HAPFloatCharacteristic*) baseCharacteristic,
                                             .service = service,
                                             .accessory = accessory,
@@ -1178,7 +1163,7 @@ static void handle_characteristic_write_request(
                                         HAPNonnull(session->server),
                                         &(const HAPStringCharacteristicWriteRequest) {
                                                 .transportType = kHAPTransportType_IP,
-                                                .session = &session->securitySession._.hap,
+                                                .session = &session->securitySession.session,
                                                 .characteristic = (const HAPStringCharacteristic*) baseCharacteristic,
                                                 .service = service,
                                                 .accessory = accessory,
@@ -1212,7 +1197,7 @@ static void handle_characteristic_write_request(
                                         HAPNonnull(session->server),
                                         &(const HAPTLV8CharacteristicWriteRequest) {
                                                 .transportType = kHAPTransportType_IP,
-                                                .session = &session->securitySession._.hap,
+                                                .session = &session->securitySession.session,
                                                 .characteristic = (const HAPTLV8Characteristic*) baseCharacteristic,
                                                 .service = service,
                                                 .accessory = accessory,
@@ -1306,10 +1291,9 @@ static int handle_characteristic_write_requests(
     HAPPrecondition(session);
     HAPPrecondition(session->server);
     HAPAccessoryServer* server = (HAPAccessoryServer*) session->server;
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
     HAPPrecondition(contexts);
     HAPPrecondition(dataBuffer);
 
@@ -1377,10 +1361,9 @@ static void put_characteristics(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
     HAPAccessoryServer* server = (HAPAccessoryServer*) session->server;
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
 
     HAPError err;
     int r;
@@ -1501,10 +1484,9 @@ static void handle_characteristic_read_request(
         HAPIPByteBuffer* data_buffer) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
 
     HAPError err;
 
@@ -1533,7 +1515,7 @@ static void handle_characteristic_read_request(
             err = HAPDataCharacteristicHandleRead(
                     HAPNonnull(session->server),
                     &(const HAPDataCharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                .session = &session->securitySession._.hap,
+                                                                .session = &session->securitySession.session,
                                                                 .characteristic = (const HAPDataCharacteristic*) chr,
                                                                 .service = svc,
                                                                 .accessory = acc },
@@ -1569,7 +1551,7 @@ static void handle_characteristic_read_request(
             err = HAPBoolCharacteristicHandleRead(
                     HAPNonnull(session->server),
                     &(const HAPBoolCharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                .session = &session->securitySession._.hap,
+                                                                .session = &session->securitySession.session,
                                                                 .characteristic = (const HAPBoolCharacteristic*) chr,
                                                                 .service = svc,
                                                                 .accessory = acc },
@@ -1584,7 +1566,7 @@ static void handle_characteristic_read_request(
             err = HAPUInt8CharacteristicHandleRead(
                     HAPNonnull(session->server),
                     &(const HAPUInt8CharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                 .session = &session->securitySession._.hap,
+                                                                 .session = &session->securitySession.session,
                                                                  .characteristic = (const HAPUInt8Characteristic*) chr,
                                                                  .service = svc,
                                                                  .accessory = acc },
@@ -1599,7 +1581,7 @@ static void handle_characteristic_read_request(
             err = HAPUInt16CharacteristicHandleRead(
                     HAPNonnull(session->server),
                     &(const HAPUInt16CharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                  .session = &session->securitySession._.hap,
+                                                                  .session = &session->securitySession.session,
                                                                   .characteristic =
                                                                           (const HAPUInt16Characteristic*) chr,
                                                                   .service = svc,
@@ -1615,7 +1597,7 @@ static void handle_characteristic_read_request(
             err = HAPUInt32CharacteristicHandleRead(
                     HAPNonnull(session->server),
                     &(const HAPUInt32CharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                  .session = &session->securitySession._.hap,
+                                                                  .session = &session->securitySession.session,
                                                                   .characteristic =
                                                                           (const HAPUInt32Characteristic*) chr,
                                                                   .service = svc,
@@ -1631,7 +1613,7 @@ static void handle_characteristic_read_request(
             err = HAPUInt64CharacteristicHandleRead(
                     HAPNonnull(session->server),
                     &(const HAPUInt64CharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                  .session = &session->securitySession._.hap,
+                                                                  .session = &session->securitySession.session,
                                                                   .characteristic =
                                                                           (const HAPUInt64Characteristic*) chr,
                                                                   .service = svc,
@@ -1647,7 +1629,7 @@ static void handle_characteristic_read_request(
             err = HAPIntCharacteristicHandleRead(
                     HAPNonnull(session->server),
                     &(const HAPIntCharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                               .session = &session->securitySession._.hap,
+                                                               .session = &session->securitySession.session,
                                                                .characteristic = (const HAPIntCharacteristic*) chr,
                                                                .service = svc,
                                                                .accessory = acc },
@@ -1662,7 +1644,7 @@ static void handle_characteristic_read_request(
             err = HAPFloatCharacteristicHandleRead(
                     HAPNonnull(session->server),
                     &(const HAPFloatCharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                 .session = &session->securitySession._.hap,
+                                                                 .session = &session->securitySession.session,
                                                                  .characteristic = (const HAPFloatCharacteristic*) chr,
                                                                  .service = svc,
                                                                  .accessory = acc },
@@ -1677,7 +1659,7 @@ static void handle_characteristic_read_request(
             err = HAPStringCharacteristicHandleRead(
                     HAPNonnull(session->server),
                     &(const HAPStringCharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                  .session = &session->securitySession._.hap,
+                                                                  .session = &session->securitySession.session,
                                                                   .characteristic =
                                                                           (const HAPStringCharacteristic*) chr,
                                                                   .service = svc,
@@ -1706,7 +1688,7 @@ static void handle_characteristic_read_request(
             err = HAPTLV8CharacteristicHandleRead(
                     HAPNonnull(session->server),
                     &(const HAPTLV8CharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                .session = &session->securitySession._.hap,
+                                                                .session = &session->securitySession.session,
                                                                 .characteristic = (const HAPTLV8Characteristic*) chr,
                                                                 .service = svc,
                                                                 .accessory = acc },
@@ -1748,10 +1730,9 @@ static int handle_characteristic_read_requests(
         HAPIPByteBuffer* data_buffer) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
 
     int r;
     size_t i, j;
@@ -1781,7 +1762,7 @@ static int handle_characteristic_read_requests(
                      (((HAPIPEventNotification*) &session->eventNotifications[j])->iid == readContext->iid)));
             readContext->ev = j < session->numEventNotifications;
             if (!HAPCharacteristicReadRequiresAdminPermissions(chr) ||
-                HAPSessionControllerIsAdmin(&session->securitySession._.hap)) {
+                HAPSessionControllerIsAdmin(&session->securitySession.session)) {
                 if (chr->properties.readable) {
                     if ((session_context != kHAPIPSessionContext_EventNotification) &&
                         HAPUUIDAreEqual(chr->characteristicType, &kHAPCharacteristicType_ProgrammableSwitchEvent)) {
@@ -1818,10 +1799,9 @@ static void get_characteristics(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
     HAPAccessoryServer* server = (HAPAccessoryServer*) session->server;
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
 
     HAPError err;
 
@@ -1913,10 +1893,9 @@ static void get_characteristics(HAPIPSessionDescriptor* session) {
 static void handle_accessory_serialization(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
 
     HAPError err;
 
@@ -2047,7 +2026,7 @@ static void handle_accessory_serialization(HAPIPSessionDescriptor* session) {
             session->outboundBuffer.limit = session->outboundBuffer.position + numFrameBytes;
 
             HAPIPSecurityProtocolEncryptData(
-                    HAPNonnull(session->server), &session->securitySession._.hap, &session->outboundBuffer);
+                    HAPNonnull(session->server), &session->securitySession.session, &session->outboundBuffer);
             HAPAssert(numEncryptedBytes == session->outboundBuffer.limit - session->outboundBuffer.position);
 
             session->outboundBufferMark = session->outboundBuffer.limit + numUnencryptedBytes;
@@ -2077,10 +2056,9 @@ static void handle_accessory_serialization(HAPIPSessionDescriptor* session) {
 static void get_accessories(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
     HAPPrecondition(!session->accessorySerializationIsInProgress);
 
     HAPError err;
@@ -2112,7 +2090,6 @@ static void handle_pairing_data(
     HAPPrecondition(session);
     HAPPrecondition(session->server);
     HAPAccessoryServer* server = (HAPAccessoryServer*) session->server;
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
 
     HAPError err;
@@ -2146,10 +2123,10 @@ static void handle_pairing_data(
             tlv8_reader_init.numBytes = session->httpContentLength.value;
             tlv8_reader_init.maxBytes = maxScratchBufferBytes;
             HAPTLVReaderCreateWithOptions(&tlv8_reader, &tlv8_reader_init);
-            r = write_hap_pairing_data(HAPNonnull(session->server), &session->securitySession._.hap, &tlv8_reader);
+            r = write_hap_pairing_data(HAPNonnull(session->server), &session->securitySession.session, &tlv8_reader);
             if (r == 0) {
                 HAPTLVWriterCreate(&tlv8_writer, scratchBuffer, maxScratchBufferBytes);
-                r = read_hap_pairing_data(HAPNonnull(session->server), &session->securitySession._.hap, &tlv8_writer);
+                r = read_hap_pairing_data(HAPNonnull(session->server), &session->securitySession.session, &tlv8_writer);
                 if (r == 0) {
                     HAPTLVWriterGetBuffer(&tlv8_writer, (void*) &p_tlv8_buffer, &tlv8_length);
                     if (HAPAccessoryServerIsPaired(HAPNonnull(session->server)) != pairing_status) {
@@ -2184,8 +2161,7 @@ static void handle_pairing_data(
                                 // Other sessions whose pairing has been removed during the pairing session
                                 // need to be closed as soon as possible.
                                 if (t != session && t->state == kHAPIPSessionState_Reading &&
-                                    t->securitySession.type == kHAPIPSecuritySessionType_HAP &&
-                                    t->securitySession.isSecured && !HAPSessionIsSecured(&t->securitySession._.hap)) {
+                                    t->securitySession.isSecured && !HAPSessionIsSecured(&t->securitySession.session)) {
                                     HAPLogInfo(&logObject, "Closing other session whose pairing has been removed.");
                                     CloseSession(t);
                                 }
@@ -2235,7 +2211,6 @@ static void handle_secure_message(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session->server);
     HAPAccessoryServer* server = (HAPAccessoryServer*) session->server;
     HAPPrecondition(server->primaryAccessory);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
     HAPPrecondition(session->inboundBuffer.data);
@@ -2370,7 +2345,7 @@ static void handle_secure_message(HAPIPSessionDescriptor* session) {
             // Serialize HAP-Token-Response.
             err = HAPMFiTokenAuthGetTokenResponse(
                     HAPNonnull(session->server),
-                    &session->securitySession._.hap,
+                    &session->securitySession.session,
                     HAPNonnull(server->primaryAccessory),
                     &writer);
             if (err) {
@@ -2396,7 +2371,7 @@ static void handle_secure_message(HAPIPSessionDescriptor* session) {
             // Handle HAP-Token-Update-Request.
             err = HAPMFiTokenAuthHandleTokenUpdateRequest(
                     HAPNonnull(session->server),
-                    &session->securitySession._.hap,
+                    &session->securitySession.session,
                     HAPNonnull(server->primaryAccessory),
                     &requestBodyReader);
             if (err) {
@@ -2427,7 +2402,7 @@ static void handle_secure_message(HAPIPSessionDescriptor* session) {
             // Serialize HAP-Info-Response.
             err = HAPAccessoryGetInfoResponse(
                     HAPNonnull(session->server),
-                    &session->securitySession._.hap,
+                    &session->securitySession.session,
                     HAPNonnull(server->primaryAccessory),
                     &writer);
             if (err) {
@@ -2514,7 +2489,6 @@ static void identify_primary_accessory(HAPIPSessionDescriptor* session) {
     HAPAccessoryServer* server = (HAPAccessoryServer*) session->server;
     HAPPrecondition(server->primaryAccessory);
     HAPPrecondition(server->primaryAccessory->aid == kHAPIPAccessoryProtocolAID_PrimaryAccessory);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(!session->securitySession.isSecured);
 
@@ -2544,7 +2518,7 @@ static void identify_primary_accessory(HAPIPSessionDescriptor* session) {
                     HAPNonnull(session->server),
                     &(const HAPBoolCharacteristicWriteRequest) {
                             .transportType = kHAPTransportType_IP,
-                            .session = &session->securitySession._.hap,
+                            .session = &session->securitySession.session,
                             .characteristic = (const HAPBoolCharacteristic*) characteristic,
                             .service = service,
                             .accessory = HAPNonnull(server->primaryAccessory),
@@ -2574,7 +2548,6 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
     HAPAssert(!session->httpParserError);
 
     {
-        HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
 
         if ((session->httpURI.numBytes == 9) &&
             HAPRawBufferAreEqual(HAPNonnull(session->httpURI.bytes), "/identify", 9)) {
@@ -2602,8 +2575,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
                             continue;
                         }
                         // TODO Make this finish writing ongoing responses. Similar to Remove Pairing.
-                        if (t != session && t->securitySession.type == kHAPIPSecuritySessionType_HAP &&
-                            HAPSessionIsTransient(&t->securitySession._.hap)) {
+                        if (t != session && HAPSessionIsTransient(&t->securitySession.session)) {
                             HAPLog(&logObject,
                                    "Closing transient session "
                                    "due to /pair-setup while transient session is active.");
@@ -2640,7 +2612,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
             if ((session->httpMethod.numBytes == 4) &&
                 HAPRawBufferAreEqual(HAPNonnull(session->httpMethod.bytes), "POST", 4)) {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         handle_pairing_data(session, HAPSessionHandlePairingsWrite, HAPSessionHandlePairingsRead);
                     } else {
                         HAPLog(&logObject, "Rejected POST /pairings: Session is transient.");
@@ -2651,7 +2623,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
                 }
             } else {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_MethodNotAllowed);
                     } else {
                         HAPLog(&logObject, "Rejected request for /pairings: Session is transient.");
@@ -2684,7 +2656,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
             if ((session->httpMethod.numBytes == 4) &&
                 HAPRawBufferAreEqual(HAPNonnull(session->httpMethod.bytes), "POST", 4)) {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         HAPLog(&logObject, "Rejected POST /config: Session is not transient.");
                         write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_ResourceNotFound);
                     } else {
@@ -2696,7 +2668,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
                 }
             } else {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_MethodNotAllowed);
                     } else {
                         HAPLog(&logObject, "Rejected request for /config: Session is transient.");
@@ -2722,7 +2694,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
             if ((session->httpMethod.numBytes == 3) &&
                 HAPRawBufferAreEqual(HAPNonnull(session->httpMethod.bytes), "GET", 3)) {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         get_accessories(session);
                     } else {
                         HAPLog(&logObject, "Rejected GET /accessories: Session is transient.");
@@ -2735,7 +2707,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
                 }
             } else {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_MethodNotAllowed);
                     } else {
                         HAPLog(&logObject, "Rejected request for /accessories: Session is transient.");
@@ -2751,7 +2723,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
             if ((session->httpMethod.numBytes == 3) &&
                 HAPRawBufferAreEqual(HAPNonnull(session->httpMethod.bytes), "GET", 3)) {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         get_characteristics(session);
                     } else {
                         HAPLog(&logObject, "Rejected GET /characteristics: Session is transient.");
@@ -2766,7 +2738,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
                     (session->httpMethod.numBytes == 3) &&
                     HAPRawBufferAreEqual(HAPNonnull(session->httpMethod.bytes), "PUT", 3)) {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         put_characteristics(session);
                     } else {
                         HAPLog(&logObject, "Rejected PUT /characteristics: Session is transient.");
@@ -2779,7 +2751,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
                 }
             } else {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_MethodNotAllowed);
                     } else {
                         HAPLog(&logObject, "Rejected request for /characteristics: Session is transient.");
@@ -2795,7 +2767,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
             if ((session->httpMethod.numBytes == 3) &&
                 HAPRawBufferAreEqual(HAPNonnull(session->httpMethod.bytes), "PUT", 3)) {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         put_prepare(session);
                     } else {
                         HAPLog(&logObject, "Rejected PUT /prepare: Session is transient.");
@@ -2808,7 +2780,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
                 }
             } else {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_MethodNotAllowed);
                     } else {
                         HAPLog(&logObject, "Rejected request for /prepare: Session is transient.");
@@ -2824,7 +2796,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
             if ((session->httpMethod.numBytes == 4) &&
                 HAPRawBufferAreEqual(HAPNonnull(session->httpMethod.bytes), "POST", 4)) {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         post_resource(session);
                     } else {
                         HAPLog(&logObject, "Rejected POST /resource: Session is transient.");
@@ -2837,7 +2809,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
                 }
             } else {
                 if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                    if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                    if (!HAPSessionIsTransient(&session->securitySession.session)) {
                         write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_MethodNotAllowed);
                     } else {
                         HAPLog(&logObject, "Rejected request for /resource: Session is transient.");
@@ -2850,7 +2822,7 @@ static void handle_http_request(HAPIPSessionDescriptor* session) {
         } else {
             HAPLogBuffer(&logObject, session->httpURI.bytes, session->httpURI.numBytes, "Unknown endpoint accessed.");
             if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
-                if (!HAPSessionIsTransient(&session->securitySession._.hap)) {
+                if (!HAPSessionIsTransient(&session->securitySession.session)) {
                     write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_ResourceNotFound);
                 } else {
                     HAPLog(&logObject, "Rejected request for unknown endpoint: Session is transient.");
@@ -2908,7 +2880,8 @@ static void handle_http(HAPIPSessionDescriptor* session) {
                     "session:%p:<",
                     (const void*) session);
 
-            if (session->securitySession.type == kHAPIPSecuritySessionType_HAP && session->securitySession.isSecured) {
+            if (
+                session->securitySession.isSecured) {
                 encrypted_length = HAPIPSecurityProtocolGetNumEncryptedBytes(
                         session->outboundBuffer.limit - session->outboundBuffer.position);
                 if (encrypted_length > session->outboundBuffer.capacity - session->outboundBuffer.position) {
@@ -2921,7 +2894,7 @@ static void handle_http(HAPIPSessionDescriptor* session) {
                     HAPAssert(encrypted_length <= session->outboundBuffer.capacity - session->outboundBuffer.position);
                 }
                 HAPIPSecurityProtocolEncryptData(
-                        HAPNonnull(session->server), &session->securitySession._.hap, &session->outboundBuffer);
+                        HAPNonnull(session->server), &session->securitySession.session, &session->outboundBuffer);
                 HAPAssert(encrypted_length == session->outboundBuffer.limit - session->outboundBuffer.position);
             }
             session->state = kHAPIPSessionState_Writing;
@@ -3199,8 +3172,7 @@ static void handle_input(HAPIPSessionDescriptor* session) {
     HAPAssert(session->inboundBuffer.limit <= session->inboundBuffer.capacity);
     HAPAssert(session->inboundBufferMark <= session->inboundBuffer.position);
     session->inboundBuffer.limit = session->inboundBuffer.position;
-    if (session->securitySession.type == kHAPIPSecuritySessionType_HAP &&
-        HAPSessionIsSecured(&session->securitySession._.hap)) {
+    if (HAPSessionIsSecured(&session->securitySession.session)) {
         // TODO Should be moved to handle_completed_output, maybe.
         if (!session->securitySession.isSecured) {
             HAPLogDebug(&logObject, "Established HAP security session.");
@@ -3208,10 +3180,9 @@ static void handle_input(HAPIPSessionDescriptor* session) {
         }
         session->inboundBuffer.position = session->inboundBufferMark;
         r = HAPIPSecurityProtocolDecryptData(
-                HAPNonnull(session->server), &session->securitySession._.hap, &session->inboundBuffer);
+                HAPNonnull(session->server), &session->securitySession.session, &session->inboundBuffer);
     } else {
-        HAPAssert(
-                session->securitySession.type != kHAPIPSecuritySessionType_HAP || !session->securitySession.isSecured);
+        HAPAssert(!session->securitySession.isSecured);
         r = 0;
     }
     if (r == 0) {
@@ -3256,9 +3227,8 @@ static void write_event_notifications(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
     HAPAccessoryServer* server = (HAPAccessoryServer*) session->server;
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
     HAPPrecondition(session->state == kHAPIPSessionState_Reading);
     HAPPrecondition(session->inboundBuffer.position == 0);
     HAPPrecondition(session->numEventNotificationFlags > 0);
@@ -3382,7 +3352,7 @@ static void write_event_notifications(HAPIPSessionDescriptor* session) {
                             session->outboundBuffer.limit - session->outboundBuffer.position);
                     if (encrypted_length <= session->outboundBuffer.capacity - session->outboundBuffer.position) {
                         HAPIPSecurityProtocolEncryptData(
-                                HAPNonnull(session->server), &session->securitySession._.hap, &session->outboundBuffer);
+                                HAPNonnull(session->server), &session->securitySession.session, &session->outboundBuffer);
                         HAPAssert(encrypted_length == session->outboundBuffer.limit - session->outboundBuffer.position);
                         session->state = kHAPIPSessionState_Writing;
                     } else {
@@ -3434,7 +3404,6 @@ static void handle_io_progression(HAPIPSessionDescriptor* session) {
         } else {
             HAPAssert(server->ip.state == kHAPIPAccessoryServerState_Running);
             if (session->numEventNotificationFlags > 0) {
-                HAPAssert(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
                 schedule_event_notifications(session->server);
             }
         }
@@ -3469,12 +3438,6 @@ static void handle_output_completion(HAPIPSessionDescriptor* session) {
 
         HAPAssert(session->tcpStreamIsOpen);
         HAPPlatformTCPStreamCloseOutput(HAPNonnull(server->platform.ip.tcpStreamManager), session->tcpStream);
-    } else if (
-            session->securitySession.type == kHAPIPSecuritySessionType_MFiSAP && session->securitySession.isOpen &&
-            session->securitySession._.mfiSAP.receivedConfigured) {
-        HAPLogDebug(&logObject, "Completed sending of /configured response.");
-        session->securitySession._.mfiSAP.receivedConfigured = false;
-        HAPAssert(server->ip.state == kHAPIPAccessoryServerState_Stopping);
     }
     session->state = kHAPIPSessionState_Reading;
     prepare_reading_request(session);
@@ -3528,8 +3491,8 @@ static void WriteOutboundData(HAPIPSessionDescriptor* session) {
         HAPAssert(numBytes <= b->limit - b->position);
         b->position += numBytes;
         if (b->position == b->limit) {
-            if (session->securitySession.type == kHAPIPSecuritySessionType_HAP && session->securitySession.isSecured &&
-                !HAPSessionIsSecured(&session->securitySession._.hap)) {
+            if (session->securitySession.isSecured &&
+                !HAPSessionIsSecured(&session->securitySession.session)) {
                 HAPLogDebug(&logObject, "Pairing removed, closing session.");
                 CloseSession(session);
             } else if (session->accessorySerializationIsInProgress) {
@@ -3966,16 +3929,10 @@ static HAPError engine_raise_event_on_session_(
         if (!session->server) {
             continue;
         }
-        if (session->securitySession.type != kHAPIPSecuritySessionType_HAP) {
-            if (!securitySession_) {
-                HAPLogDebug(&logObject, "Not flagging event pending on non-HAP session.");
-            }
+        if (securitySession_ && (securitySession_ != &session->securitySession.session)) {
             continue;
         }
-        if (securitySession_ && (securitySession_ != &session->securitySession._.hap)) {
-            continue;
-        }
-        if (HAPSessionIsTransient(&session->securitySession._.hap)) {
+        if (HAPSessionIsTransient(&session->securitySession.session)) {
             HAPLogDebug(&logObject, "Not flagging event pending on transient session.");
             continue;
         }
@@ -4180,10 +4137,7 @@ size_t HAPAccessoryServerGetIPSessionIndex(const HAPAccessoryServerRef* server_,
         if (!t->server) {
             continue;
         }
-        if (t->securitySession.type != kHAPIPSecuritySessionType_HAP) {
-            continue;
-        }
-        if (&t->securitySession._.hap == session) {
+        if (&t->securitySession.session == session) {
             return i;
         }
     }
@@ -4199,10 +4153,9 @@ bool HAPIPSessionAreEventNotificationsEnabled(
     HAPPrecondition(session_);
     HAPIPSessionDescriptor* session = (HAPIPSessionDescriptor*) session_;
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
     HAPPrecondition(characteristic);
     HAPPrecondition(service);
     HAPPrecondition(accessory);
@@ -4236,10 +4189,9 @@ void HAPIPSessionHandleReadRequest(
     HAPPrecondition(session_);
     HAPIPSessionDescriptor* session = (HAPIPSessionDescriptor*) session_;
     HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.type == kHAPIPSecuritySessionType_HAP);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession._.hap));
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
     HAPPrecondition(readResult);
     HAPPrecondition(dataBuffer);
 
@@ -4254,7 +4206,7 @@ void HAPIPSessionHandleReadRequest(
     readContext.iid = baseCharacteristic->iid;
 
     if (!HAPCharacteristicReadRequiresAdminPermissions(baseCharacteristic) ||
-        HAPSessionControllerIsAdmin(&session->securitySession._.hap)) {
+        HAPSessionControllerIsAdmin(&session->securitySession.session)) {
         if (baseCharacteristic->properties.readable) {
             if ((sessionContext != kHAPIPSessionContext_EventNotification) &&
                 HAPUUIDAreEqual(

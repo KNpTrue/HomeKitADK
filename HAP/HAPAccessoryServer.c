@@ -1688,10 +1688,7 @@ void HAPAccessoryServerEnumerateConnectedSessions(
                 continue;
             }
             HAPAssert(session->server == server_);
-            if (session->securitySession.type != kHAPIPSecuritySessionType_HAP) {
-                continue;
-            }
-            callback(context, server_, &session->securitySession._.hap, &shouldContinue);
+            callback(context, server_, &session->securitySession.session, &shouldContinue);
         }
         if (!shouldContinue) {
             return;

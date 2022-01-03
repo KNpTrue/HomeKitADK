@@ -66,22 +66,9 @@ struct HAPIPAccessoryServerTransport {
 };
 
 /**
- * Session type.
- */
-HAP_ENUM_BEGIN(uint8_t, HAPIPSecuritySessionType) { /** HAP session. */
-                                                    kHAPIPSecuritySessionType_HAP = 1,
-
-                                                    /** MFiSAP session. */
-                                                    kHAPIPSecuritySessionType_MFiSAP
-} HAP_ENUM_END(uint8_t, HAPIPSecuritySessionType);
-
-/**
  * Session.
  */
 typedef struct {
-    /** Session type. */
-    HAPIPSecuritySessionType type;
-
     /** Whether or not the session is open. */
     bool isOpen : 1;
 
@@ -95,20 +82,8 @@ typedef struct {
      */
     bool receivedConfig : 1;
 
-    /** Session. */
-    union {
-        /** HAP session. */
-        HAPSessionRef hap;
-
-        /** MFi SAP session. */
-        struct {
-            /** AES master context. */
-            HAP_aes_ctr_ctx aesMasterContext;
-
-            /** Whether or not the /configured message has been received. */
-            bool receivedConfigured : 1;
-        } mfiSAP;
-    } _;
+    /** HAP Session. */
+    HAPSessionRef session;
 } HAPIPSecuritySession;
 
 //----------------------------------------------------------------------------------------------------------------------
