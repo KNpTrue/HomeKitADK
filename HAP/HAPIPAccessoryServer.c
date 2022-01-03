@@ -4051,9 +4051,6 @@ static void Create(HAPAccessoryServerRef* server_, const HAPAccessoryServerOptio
                 ipSession->numEventNotifications * sizeof *ipSession->eventNotifications);
     }
     server->ip.storage = options->ip.accessoryServerStorage;
-
-    // Install server engine.
-    HAPNonnull(server->transports.ip)->serverEngine.install();
 }
 
 static void PrepareStart(HAPAccessoryServerRef* server_) {
@@ -4088,41 +4085,20 @@ static void HAPSessionInvalidateDependentIPState(HAPAccessoryServerRef* server_,
     HAPPrecondition(session);
 }
 
-static const HAPAccessoryServerServerEngine* _Nullable _serverEngine;
-
-static void HAPAccessoryServerInstallServerEngine(void) {
-    HAPPrecondition(!_serverEngine);
-
-    _serverEngine = &HAPIPAccessoryServerServerEngine;
-}
-
-static void HAPAccessoryServerUninstallServerEngine(void) {
-    _serverEngine = NULL;
-}
-
-static const HAPAccessoryServerServerEngine* _Nullable HAPAccessoryServerGetServerEngine(void) {
-    return _serverEngine;
-}
-
 const HAPIPAccessoryServerTransport kHAPAccessoryServerTransport_IP = {
     .create = Create,
     .prepareStart = PrepareStart,
     .willStart = WillStart,
     .prepareStop = PrepareStop,
     .session = { .invalidateDependentIPState = HAPSessionInvalidateDependentIPState },
-    .serverEngine = { .install = HAPAccessoryServerInstallServerEngine,
-                      .uninstall = HAPAccessoryServerUninstallServerEngine,
-                      .get = HAPAccessoryServerGetServerEngine }
+    .serverEngine = { .init = engine_init,
+                      .deinit = engine_deinit,
+                      .getState = engine_get_state,
+                      .start = engine_start,
+                      .stop = engine_stop,
+                      .raiseEvent = engine_raise_event,
+                      .raiseEventOnSession = engine_raise_event_on_session },
 };
-
-const HAPAccessoryServerServerEngine HAPIPAccessoryServerServerEngine = { .init = engine_init,
-                                                                          .deinit = engine_deinit,
-                                                                          .get_state = engine_get_state,
-                                                                          .start = engine_start,
-                                                                          .stop = engine_stop,
-                                                                          .raise_event = engine_raise_event,
-                                                                          .raise_event_on_session =
-                                                                                  engine_raise_event_on_session };
 
 HAP_RESULT_USE_CHECK
 size_t HAPAccessoryServerGetIPSessionIndex(const HAPAccessoryServerRef* server_, const HAPSessionRef* session) {

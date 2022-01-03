@@ -17,32 +17,6 @@ extern "C" {
 #pragma clang assume_nonnull begin
 #endif
 
-typedef struct {
-    void (*init)(HAPAccessoryServerRef* p_srv);
-    HAP_RESULT_USE_CHECK
-    HAPError (*deinit)(HAPAccessoryServerRef* p_srv);
-    HAP_RESULT_USE_CHECK
-    HAPAccessoryServerState (*get_state)(HAPAccessoryServerRef* p_srv);
-    void (*start)(HAPAccessoryServerRef* p_srv);
-    HAP_RESULT_USE_CHECK
-    HAPError (*stop)(HAPAccessoryServerRef* p_srv);
-    HAP_RESULT_USE_CHECK
-    HAPError (*raise_event)(
-            HAPAccessoryServerRef* server,
-            const HAPCharacteristic* characteristic,
-            const HAPService* service,
-            const HAPAccessory* accessory);
-    HAP_RESULT_USE_CHECK
-    HAPError (*raise_event_on_session)(
-            HAPAccessoryServerRef* server,
-            const HAPCharacteristic* characteristic,
-            const HAPService* service,
-            const HAPAccessory* accessory,
-            const HAPSessionRef* session);
-} HAPAccessoryServerServerEngine;
-
-extern const HAPAccessoryServerServerEngine HAPIPAccessoryServerServerEngine;
-
 struct HAPIPAccessoryServerTransport {
     void (*create)(HAPAccessoryServerRef* server, const HAPAccessoryServerOptions* options);
 
@@ -57,11 +31,33 @@ struct HAPIPAccessoryServerTransport {
     } session;
 
     struct {
-        void (*install)(void);
+        void (*init)(HAPAccessoryServerRef* server);
 
-        void (*uninstall)(void);
+        HAP_RESULT_USE_CHECK
+        HAPError (*deinit)(HAPAccessoryServerRef* server);
 
-        const HAPAccessoryServerServerEngine* _Nullable (*_Nonnull get)(void);
+        HAP_RESULT_USE_CHECK
+        HAPAccessoryServerState (*getState)(HAPAccessoryServerRef* server);
+
+        void (*start)(HAPAccessoryServerRef* server);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*stop)(HAPAccessoryServerRef* server);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*raiseEvent)(
+                HAPAccessoryServerRef* server,
+                const HAPCharacteristic* characteristic,
+                const HAPService* service,
+                const HAPAccessory* accessory);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*raiseEventOnSession)(
+                HAPAccessoryServerRef* server,
+                const HAPCharacteristic* characteristic,
+                const HAPService* service,
+                const HAPAccessory* accessory,
+                const HAPSessionRef* session);
     } serverEngine;
 };
 

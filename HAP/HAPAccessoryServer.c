@@ -46,10 +46,7 @@ static void CallbackTimerExpired(HAPPlatformTimerRef timer, void* _Nullable cont
 
     // Complete shutdown if accessory server has been stopped using a server engine.
     if (server->transports.ip) {
-        const HAPAccessoryServerServerEngine* _Nullable serverEngine =
-                HAPNonnull(server->transports.ip)->serverEngine.get();
-        if (serverEngine && serverEngine->stop &&
-            HAPAccessoryServerGetState(server_) == kHAPAccessoryServerState_Idle) {
+        if (HAPAccessoryServerGetState(server_) == kHAPAccessoryServerState_Idle) {
             CompleteShutdown(server_);
             return;
         }
@@ -217,7 +214,7 @@ void HAPAccessoryServerCreate(
     // Copy IP parameters.
     server->transports.ip = options->ip.transport;
     if (server->transports.ip) {
-        HAPNonnull(server->transports.ip)->create(server_, options);
+        server->transports.ip->create(server_, options);
     } else {
         HAPRawBufferZero(&server->platform.ip, sizeof server->platform.ip);
     }
@@ -234,11 +231,7 @@ void HAPAccessoryServerCreate(
     server->context = context;
 
     if (server->transports.ip) {
-        const HAPAccessoryServerServerEngine* _Nullable serverEngine =
-                HAPNonnull(server->transports.ip)->serverEngine.get();
-        if (serverEngine && serverEngine->init) {
-            serverEngine->init(server_);
-        }
+        server->transports.ip->serverEngine.init(server_);
     }
 }
 
@@ -261,13 +254,9 @@ void HAPAccessoryServerRelease(HAPAccessoryServerRef* server_) {
     }
 
     if (server->transports.ip) {
-        const HAPAccessoryServerServerEngine* _Nullable serverEngine =
-                HAPNonnull(server->transports.ip)->serverEngine.get();
-        if (serverEngine && serverEngine->deinit) {
-            err = serverEngine->deinit(server_);
-            if (err) {
-                HAPFatalError();
-            }
+        err = server->transports.ip->serverEngine.deinit(server_);
+        if (err) {
+            HAPFatalError();
         }
     }
 
@@ -284,10 +273,6 @@ void HAPAccessoryServerRelease(HAPAccessoryServerRef* server_) {
 
     HAPMFiHWAuthRelease(&server->mfi);
 
-    if (server->transports.ip) {
-        HAPNonnull(server->transports.ip)->serverEngine.uninstall();
-    }
-
     HAPRawBufferZero(server_, sizeof *server_);
 }
 
@@ -297,11 +282,7 @@ HAPAccessoryServerState HAPAccessoryServerGetState(HAPAccessoryServerRef* server
     HAPAccessoryServer* server = (HAPAccessoryServer*) server_;
 
     if (server->transports.ip) {
-        const HAPAccessoryServerServerEngine* _Nullable serverEngine =
-                HAPNonnull(server->transports.ip)->serverEngine.get();
-        if (serverEngine && serverEngine->get_state) {
-            return serverEngine->get_state(server_);
-        }
+        return server->transports.ip->serverEngine.getState(server_);
     }
 
     return server->state;
@@ -648,11 +629,7 @@ void HAPAccessoryServerStart(HAPAccessoryServerRef* server_, const HAPAccessory*
     }
 
     if (server->transports.ip) {
-        const HAPAccessoryServerServerEngine* _Nullable serverEngine =
-                HAPNonnull(server->transports.ip)->serverEngine.get();
-        if (serverEngine && serverEngine->start) {
-            serverEngine->start(server_);
-        }
+        server->transports.ip->serverEngine.start(server_);
     }
 }
 
@@ -698,11 +675,7 @@ void HAPAccessoryServerStartBridge(
     }
 
     if (server->transports.ip) {
-        const HAPAccessoryServerServerEngine* _Nullable serverEngine =
-                HAPNonnull(server->transports.ip)->serverEngine.get();
-        if (serverEngine && serverEngine->start) {
-            serverEngine->start(server_);
-        }
+        server->transports.ip->serverEngine.start(server_);
     }
 }
 
@@ -719,7 +692,7 @@ void HAPAccessoryServerStop(HAPAccessoryServerRef* server_) {
         HAPAssert(server->state == kHAPAccessoryServerState_Running);
         HAPLogInfo(&logObject, "Accessory server shutting down.");
         server->state = kHAPAccessoryServerState_Stopping;
-        if (!server->transports.ip || !HAPNonnull(server->transports.ip)->serverEngine.get()) {
+        if (!server->transports.ip) {
             server->callbacks.handleUpdatedState(server_, server->context);
         }
     }
@@ -748,15 +721,11 @@ void HAPAccessoryServerStop(HAPAccessoryServerRef* server_) {
     // - HAPAccessoryServerDelegateScheduleHandleUpdatedState => kHAPAccessoryServerState_Idle.
     // - CompleteShutdown.
     if (server->transports.ip) {
-        const HAPAccessoryServerServerEngine* _Nullable serverEngine =
-                HAPNonnull(server->transports.ip)->serverEngine.get();
-        if (serverEngine && serverEngine->stop) {
-            err = serverEngine->stop(server_);
-            if (err) {
-                HAPFatalError();
-            }
-            return;
+        err = server->transports.ip->serverEngine.stop(server_);
+        if (err) {
+            HAPFatalError();
         }
+        return;
     }
 
     // Complete shutdown.
@@ -1182,13 +1151,9 @@ void HAPAccessoryServerRaiseEvent(
     }
 
     if (server->transports.ip) {
-        const HAPAccessoryServerServerEngine* _Nullable serverEngine =
-                HAPNonnull(server->transports.ip)->serverEngine.get();
-        if (serverEngine && serverEngine->raise_event) {
-            err = serverEngine->raise_event(server_, characteristic, service, accessory);
-            if (err) {
-                HAPFatalError();
-            }
+        err = server->transports.ip->serverEngine.raiseEvent(server_, characteristic, service, accessory);
+        if (err) {
+            HAPFatalError();
         }
     }
 }
@@ -1217,13 +1182,9 @@ void HAPAccessoryServerRaiseEventOnSession(
     }
 
     if (server->transports.ip) {
-        const HAPAccessoryServerServerEngine* _Nullable serverEngine =
-                HAPNonnull(server->transports.ip)->serverEngine.get();
-        if (serverEngine && serverEngine->raise_event_on_session) {
-            err = serverEngine->raise_event_on_session(server_, characteristic, service, accessory, session);
-            if (err) {
-                HAPFatalError();
-            }
+        err = server->transports.ip->serverEngine.raiseEventOnSession(server_, characteristic, service, accessory, session);
+        if (err) {
+            HAPFatalError();
         }
     }
 }
