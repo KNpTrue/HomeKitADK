@@ -4072,10 +4072,6 @@ static void PrepareStart(HAPAccessoryServerRef* server_) {
     }
 }
 
-static void WillStart(HAPAccessoryServerRef* server_) {
-    HAPPrecondition(server_);
-}
-
 static void PrepareStop(HAPAccessoryServerRef* server_) {
     HAPPrecondition(server_);
 }
@@ -4088,7 +4084,6 @@ static void HAPSessionInvalidateDependentIPState(HAPAccessoryServerRef* server_,
 const HAPIPAccessoryServerTransport kHAPAccessoryServerTransport_IP = {
     .create = Create,
     .prepareStart = PrepareStart,
-    .willStart = WillStart,
     .prepareStop = PrepareStop,
     .session = { .invalidateDependentIPState = HAPSessionInvalidateDependentIPState },
     .serverEngine = { .init = engine_init,

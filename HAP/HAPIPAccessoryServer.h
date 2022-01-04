@@ -22,8 +22,6 @@ struct HAPIPAccessoryServerTransport {
 
     void (*prepareStart)(HAPAccessoryServerRef* server);
 
-    void (*willStart)(HAPAccessoryServerRef* server);
-
     void (*prepareStop)(HAPAccessoryServerRef* server);
 
     struct {
