@@ -86,7 +86,9 @@ HAPError HAPIPAccessorySerializeReadResponse(
         char* bytes,
         size_t minBytes,
         size_t maxBytes,
-        size_t* numBytes);
+        size_t* numBytes,
+        HAPIPCharacteristicContextRef* readContext,
+        HAPIPByteBuffer* dataBuffer);
 
 #if __has_feature(nullability)
 #pragma clang assume_nonnull end

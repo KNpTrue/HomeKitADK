@@ -6,6 +6,17 @@
 
 #include "HAP+Internal.h"
 
+void HAPIPByteBufferInit(HAPIPByteBuffer* byteBuffer, char* bytes, size_t numBytes) {
+    HAPPrecondition(byteBuffer);
+    HAPPrecondition(bytes);
+    HAPPrecondition(numBytes > 0);
+
+    byteBuffer->position = 0;
+    byteBuffer->limit = numBytes;
+    byteBuffer->capacity = numBytes;
+    byteBuffer->data = bytes;
+}
+
 void HAPIPByteBufferClear(HAPIPByteBuffer* byteBuffer) {
     HAPPrecondition(byteBuffer);
 

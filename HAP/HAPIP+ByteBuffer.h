@@ -35,6 +35,15 @@ typedef struct {
 } HAPIPByteBuffer;
 
 /**
+ * Initialize a byte buffer.
+ *
+ * @param      byteBuffer           Byte buffer.
+ * @param      bytes                The pointer to the memory block.
+ * @param      numBytes             Size of @p byteBuffer.
+ */
+void HAPIPByteBufferInit(HAPIPByteBuffer* byteBuffer, char* bytes, size_t numBytes);
+
+/**
  * Clears a byte buffer.
  *
  * @param      byteBuffer           Byte buffer.

@@ -114,6 +114,7 @@ HAP_ENUM_BEGIN(uint8_t, HAPIPAccessorySerializationState) {
     kHAPIPAccessorySerializationState_CharacteristicValue_Name,
     kHAPIPAccessorySerializationState_CharacteristicValue_NameSeparator,
     kHAPIPAccessorySerializationState_CharacteristicValue_Value,
+    kHAPIPAccessorySerializationState_CharacteristicValue_Value_InProgress,
     kHAPIPAccessorySerializationState_CharacteristicValue_ValueSeparator,
 
     kHAPIPAccessorySerializationState_CharacteristicPermissionsArray_Name,
@@ -272,7 +273,9 @@ HAPError HAPIPAccessorySerializeReadResponse(
         char* bytes,
         size_t minBytes,
         size_t maxBytes,
-        size_t* numBytes) {
+        size_t* numBytes,
+        HAPIPCharacteristicContextRef* _readContext,
+        HAPIPByteBuffer* dataBuffer) {
     HAPPrecondition(context);
     HAPPrecondition(context->state != kHAPIPAccessorySerializationState_ResponseIsComplete);
     HAPPrecondition(server_);
@@ -283,8 +286,11 @@ HAPError HAPIPAccessorySerializeReadResponse(
     HAPPrecondition(minBytes >= 1);
     HAPPrecondition(maxBytes >= minBytes);
     HAPPrecondition(numBytes);
+    HAPPrecondition(_readContext);
+    HAPPrecondition(dataBuffer);
 
     HAPError err;
+    HAPIPCharacteristicContext* readContext = (HAPIPCharacteristicContext*) _readContext;
 
     // See HomeKit Accessory Protocol Specification R14
     // Section 6.3 HAP Objects
@@ -858,36 +864,11 @@ HAPError HAPIPAccessorySerializeReadResponse(
                 const HAPBaseCharacteristic* baseCharacteristic = GET_CURRENT_CHARACTERISTIC();
                 HAPAssert(baseCharacteristic);
                 HAPAssert(baseCharacteristic->properties.readable);
-                HAPIPSessionReadResult readResult;
-
-                HAPAssert(*numBytes <= maxBytes);
-                if (maxBytes - *numBytes < 2) {
-                    HAPLogError(&logObject, "Not enough resources to serialize GET /accessories response.");
-                    return kHAPError_OutOfResources;
-                }
-                // Buffer 'bytes' has enough capacity to store at least an empty string including quotation marks.
-
-                HAPIPByteBuffer dataBuffer;
-                dataBuffer.data = &bytes[*numBytes + 1]; // Leave space for beginning quotation mark.
-                dataBuffer.position = 0;
-                dataBuffer.limit = maxBytes - *numBytes - 2; // Leave space for ending quotation mark.
-                dataBuffer.capacity = dataBuffer.limit;
-                HAPAssert(dataBuffer.data);
-                HAPAssert(dataBuffer.position <= dataBuffer.limit);
-                HAPAssert(dataBuffer.limit <= dataBuffer.capacity);
-
                 const HAPAccessory* accessory = GET_CURRENT_ACCESSORY();
                 HAPAssert(accessory);
                 const HAPService* service = GET_CURRENT_SERVICE();
                 HAPAssert(service);
-                HAPIPSessionHandleReadRequest(
-                        session,
-                        kHAPIPSessionContext_GetAccessories,
-                        baseCharacteristic,
-                        service,
-                        accessory,
-                        &readResult,
-                        &dataBuffer);
+
                 if (HAPUUIDAreEqual(
                             baseCharacteristic->characteristicType, &kHAPCharacteristicType_ProgrammableSwitchEvent)) {
                     // A read of this characteristic must always return a null value for IP accessories.
@@ -900,11 +881,41 @@ HAPError HAPIPAccessorySerializeReadResponse(
                             accessory,
                             "Sending null value (readHandler callback is only called for HAP events).");
                     APPEND_STRING_OR_RETURN_ERROR("null");
+                    context->state = kHAPIPAccessorySerializationState_CharacteristicValue_ValueSeparator;
+                    continue;
                 } else if (
                         baseCharacteristic->properties.ip.controlPoint &&
                         (baseCharacteristic->format == kHAPCharacteristicFormat_TLV8)) {
                     APPEND_STRING_OR_RETURN_ERROR("\"\"");
-                } else if (readResult.status != 0) {
+                    context->state = kHAPIPAccessorySerializationState_CharacteristicValue_ValueSeparator;
+                    continue;
+                }
+                HAPIPByteBufferClear(dataBuffer);
+                HAPIPSessionHandleReadRequest(
+                        session,
+                        kHAPIPSessionContext_GetAccessories,
+                        baseCharacteristic,
+                        service,
+                        accessory,
+                        _readContext,
+                        dataBuffer);
+                context->state = kHAPIPAccessorySerializationState_CharacteristicValue_Value_InProgress;
+            }
+                continue;
+            case kHAPIPAccessorySerializationState_CharacteristicValue_Value_InProgress: {
+                if (readContext->status == kHAPIPAccessoryServerStatusCode_InPorgress) {
+                    return kHAPError_InProgress;
+                }
+
+                const HAPBaseCharacteristic* baseCharacteristic = GET_CURRENT_CHARACTERISTIC();
+                HAPAssert(baseCharacteristic);
+                HAPAssert(baseCharacteristic->properties.readable);
+                const HAPAccessory* accessory = GET_CURRENT_ACCESSORY();
+                HAPAssert(accessory);
+                const HAPService* service = GET_CURRENT_SERVICE();
+                HAPAssert(service);
+
+                if (readContext->status != kHAPIPAccessoryServerStatusCode_Success) {
                     if (baseCharacteristic->format == kHAPCharacteristicFormat_TLV8) {
                         HAPLogCharacteristicInfo(
                                 &logObject,
@@ -919,35 +930,39 @@ HAPError HAPIPAccessorySerializeReadResponse(
                 } else {
                     switch (baseCharacteristic->format) {
                         case kHAPCharacteristicFormat_Bool: {
-                            APPEND_STRING_OR_RETURN_ERROR(readResult.value.unsignedIntValue ? "1" : "0");
+                            APPEND_STRING_OR_RETURN_ERROR(readContext->value.unsignedIntValue ? "1" : "0");
                         } break;
                         case kHAPCharacteristicFormat_UInt8:
                         case kHAPCharacteristicFormat_UInt16:
                         case kHAPCharacteristicFormat_UInt32:
                         case kHAPCharacteristicFormat_UInt64: {
-                            APPEND_UINT64_OR_RETURN_ERROR(readResult.value.unsignedIntValue);
+                            APPEND_UINT64_OR_RETURN_ERROR(readContext->value.unsignedIntValue);
                         } break;
                         case kHAPCharacteristicFormat_Int: {
-                            APPEND_INT32_OR_RETURN_ERROR(readResult.value.intValue);
+                            APPEND_INT32_OR_RETURN_ERROR(readContext->value.intValue);
                         } break;
                         case kHAPCharacteristicFormat_Float: {
-                            APPEND_FLOAT_OR_RETURN_ERROR(readResult.value.floatValue);
+                            APPEND_FLOAT_OR_RETURN_ERROR(readContext->value.floatValue);
                         } break;
                         case kHAPCharacteristicFormat_String:
                         case kHAPCharacteristicFormat_TLV8:
                         case kHAPCharacteristicFormat_Data: {
                             err = HAPJSONUtilsEscapeStringData(
-                                    HAPNonnull(readResult.value.stringValue.bytes),
-                                    dataBuffer.limit,
-                                    &readResult.value.stringValue.numBytes);
-                            if (err) {
+                                    HAPNonnull(readContext->value.stringValue.bytes),
+                                    dataBuffer->limit,
+                                    &readContext->value.stringValue.numBytes);
+                            if (err || readContext->value.stringValue.numBytes > maxBytes - *numBytes - 2) {
                                 HAPAssert(err == kHAPError_OutOfResources);
                                 HAPLogError(&logObject, "Not enough resources to serialize GET /accessories response.");
                                 return err;
                             }
-                            bytes[*numBytes] = '"';
-                            bytes[*numBytes + 1 + readResult.value.stringValue.numBytes] = '"';
-                            *numBytes += 1 + readResult.value.stringValue.numBytes + 1;
+                            bytes[(*numBytes)++] = '"';
+                            HAPRawBufferCopyBytes(
+                                    bytes + *numBytes,
+                                    readContext->value.stringValue.bytes,
+                                    readContext->value.stringValue.numBytes);
+                            *numBytes += readContext->value.stringValue.numBytes;
+                            bytes[(*numBytes)++] = '"';
                         } break;
                     }
                 }

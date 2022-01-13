@@ -17,6 +17,51 @@ extern "C" {
 #pragma clang assume_nonnull begin
 #endif
 
+/**
+ * HAP Status Codes.
+ *
+ * @see HomeKit Accessory Protocol Specification R14
+ *      Table 6-11 HAP Status Codes
+ */
+/**@{*/
+/** This specifies a success for the request. */
+#define kHAPIPAccessoryServerStatusCode_Success ((int32_t) 0)
+
+/** Request denied due to insufficient privileges. */
+#define kHAPIPAccessoryServerStatusCode_InsufficientPrivileges ((int32_t) -70401)
+
+/** Unable to perform operation with requested service or characteristic. */
+#define kHAPIPAccessoryServerStatusCode_UnableToPerformOperation ((int32_t) -70402)
+
+/** Resource is busy, try again. */
+#define kHAPIPAccessoryServerStatusCode_ResourceIsBusy ((int32_t) -70403)
+
+/** Cannot write to read only characteristic. */
+#define kHAPIPAccessoryServerStatusCode_WriteToReadOnlyCharacteristic ((int32_t) -70404)
+
+/** Cannot read from a write only characteristic. */
+#define kHAPIPAccessoryServerStatusCode_ReadFromWriteOnlyCharacteristic ((int32_t) -70405)
+
+/** Notification is not supported for characteristic. */
+#define kHAPIPAccessoryServerStatusCode_NotificationNotSupported ((int32_t) -70406)
+
+/** Out of resources to process request. */
+#define kHAPIPAccessoryServerStatusCode_OutOfResources ((int32_t) -70407)
+
+/** Resource does not exist. */
+#define kHAPIPAccessoryServerStatusCode_ResourceDoesNotExist ((int32_t) -70409)
+
+/** Accessory received an invalid value in a write request. */
+#define kHAPIPAccessoryServerStatusCode_InvalidValueInWrite ((int32_t) -70410)
+
+/** Insufficient Authorization. */
+#define kHAPIPAccessoryServerStatusCode_InsufficientAuthorization ((int32_t) -70411)
+
+/** In progress. */
+#define kHAPIPAccessoryServerStatusCode_InPorgress ((int32_t) -70412)
+
+/**@}*/
+
 struct HAPIPAccessoryServerTransport {
     void (*create)(HAPAccessoryServerRef* server, const HAPAccessoryServerOptions* options);
 
@@ -56,6 +101,116 @@ struct HAPIPAccessoryServerTransport {
                 const HAPService* service,
                 const HAPAccessory* accessory,
                 const HAPSessionRef* session);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseWriteRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPCharacteristic* characteristic,
+                HAPError result);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseDataReadRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPDataCharacteristic* characteristic,
+                HAPError result,
+                const void* valueBytes,
+                size_t numValueBytes);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseBoolReadRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPBoolCharacteristic* characteristic,
+                HAPError result,
+                bool value);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseUInt8ReadRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPUInt8Characteristic* characteristic,
+                HAPError result,
+                uint8_t value);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseUInt16ReadRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPUInt16Characteristic* characteristic,
+                HAPError result,
+                uint16_t value);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseUInt32ReadRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPUInt32Characteristic* characteristic,
+                HAPError result,
+                uint32_t value);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseUInt64ReadRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPUInt64Characteristic* characteristic,
+                HAPError result,
+                uint64_t value);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseIntReadRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPIntCharacteristic* characteristic,
+                HAPError result,
+                int32_t value);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseFloatReadRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPFloatCharacteristic* characteristic,
+                HAPError result,
+                float value);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseStringReadRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPStringCharacteristic* characteristic,
+                HAPError result,
+                const char* value);
+
+        HAP_RESULT_USE_CHECK
+        HAPError (*responseTLV8ReadRequest)(
+                HAPAccessoryServerRef* server,
+                HAPSessionRef* session,
+                const HAPAccessory* accessory,
+                const HAPService* service,
+                const HAPTLV8Characteristic* characteristic,
+                HAPError result,
+                HAPTLVWriterRef* writer);
     } serverEngine;
 };
 
@@ -96,6 +251,25 @@ HAP_ENUM_BEGIN(uint8_t, HAPIPSessionState) { /** Accessory server session is idl
 } HAP_ENUM_END(uint8_t, HAPIPSessionState);
 
 /**
+ * Session in progress state.
+ */
+HAP_ENUM_BEGIN(uint8_t, HAPIPSessionInProgressState) { /** None. */
+                                                       kHAPIPSessionInProgressState_None,
+
+                                                       /** Get Accessories. */
+                                                       kHAPIPSessionInProgressState_GetAccessories,
+
+                                                       /** Put characteristics. */
+                                                       kHAPIPSessionInProgressState_PutCharacteristics,
+
+                                                       /** Get characteristics. */
+                                                       kHAPIPSessionInProgressState_GetCharacteristics,
+        
+                                                       /** Event notifications. */
+                                                       kHAPIPSessionInProgressState_EventNotifications,
+} HAP_ENUM_END(uint8_t, HAPIPSessionInProgressState);
+
+/**
  * HTTP/1.1 Content Type.
  */
 HAP_ENUM_BEGIN(uint8_t, HAPIPAccessoryServerContentType) { /** Unknown HTTP/1.1 content type. */
@@ -108,7 +282,7 @@ HAP_ENUM_BEGIN(uint8_t, HAPIPAccessoryServerContentType) { /** Unknown HTTP/1.1 
                                                            kHAPIPAccessoryServerContentType_Application_OctetStream,
 
                                                            /** application/pairing+tlv8. */
-                                                           kHAPIPAccessoryServerContentType_Application_PairingTLV8
+                                                           kHAPIPAccessoryServerContentType_Application_PairingTLV8,
 } HAP_ENUM_END(uint8_t, HAPIPAccessoryServerContentType);
 
 /**
@@ -151,11 +325,14 @@ typedef struct {
     /** Inbound buffer. */
     HAPIPByteBuffer inboundBuffer;
 
-    /** Marked inbound buffer position indicating the position until which the buffer has been decrypted. */
-    size_t inboundBufferMark;
-
     /** Outbound buffer. */
     HAPIPByteBuffer outboundBuffer;
+
+    /** Scratch buffer. */
+    HAPIPByteBuffer scratchBuffer;
+
+    /** Marked inbound buffer position indicating the position until which the buffer has been decrypted. */
+    size_t inboundBufferMark;
 
     /**
      * Marked outbound buffer position indicating the position until which the buffer has not yet been encrypted
@@ -253,6 +430,21 @@ typedef struct {
     HAPIPAccessoryServerContentType httpContentType;
 
     /**
+     * Array of read/write contexts on this session.
+     */
+    HAPIPCharacteristicContextRef* _Nullable contexts;
+
+    /**
+     * The maximum number of contexts this session can handle.
+     */
+    size_t maxContexts;
+
+    /**
+     * The number of contexts on this session.
+     */
+    size_t numContexts;
+
+    /**
      * Array of event notification contexts on this session.
      */
     HAPIPEventNotificationRef* _Nullable eventNotifications;
@@ -292,10 +484,12 @@ typedef struct {
      */
     HAPIPAccessorySerializationContext accessorySerializationContext;
 
-    /**
-     * Flag indicating whether incremental serialization of accessory attribute database is in progress.
-     */
-    bool accessorySerializationIsInProgress;
+    struct {
+        bool mutliStatus;
+        HAPIPReadRequestParameters parameters;
+        HAPIPSessionInProgressState state;
+        size_t numContexts;
+    } inProgress;
 } HAPIPSessionDescriptor;
 HAP_STATIC_ASSERT(sizeof(HAPIPSessionDescriptorRef) >= sizeof(HAPIPSessionDescriptor), HAPIPSessionDescriptor);
 

@@ -110,6 +110,9 @@ HAPError HAPDataCharacteristicHandleRead(
     err = request->characteristic->callbacks.handleRead(
             server, request, valueBytes, maxValueBytes, numValueBytes, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_OutOfResources ||
                 err == kHAPError_Busy);
@@ -170,6 +173,9 @@ HAPError HAPDataCharacteristicHandleWrite(
             &logObject, request->characteristic, request->service, request->accessory, "Calling write handler.");
     err = request->characteristic->callbacks.handleWrite(server, request, valueBytes, numValueBytes, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                 err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
@@ -270,6 +276,9 @@ HAPError HAPBoolCharacteristicHandleRead(
             &logObject, request->characteristic, request->service, request->accessory, "Calling read handler.");
     err = request->characteristic->callbacks.handleRead(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_OutOfResources ||
                 err == kHAPError_Busy);
@@ -317,6 +326,9 @@ HAPError HAPBoolCharacteristicHandleWrite(
             &logObject, request->characteristic, request->service, request->accessory, "Calling write handler.");
     err = request->characteristic->callbacks.handleWrite(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                 err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
@@ -479,6 +491,9 @@ HAPError HAPUInt8CharacteristicHandleRead(
             &logObject, request->characteristic, request->service, request->accessory, "Calling read handler.");
     err = request->characteristic->callbacks.handleRead(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_OutOfResources ||
                 err == kHAPError_Busy);
@@ -526,6 +541,9 @@ HAPError HAPUInt8CharacteristicHandleWrite(
             &logObject, request->characteristic, request->service, request->accessory, "Calling write handler.");
     err = request->characteristic->callbacks.handleWrite(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                 err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
@@ -635,6 +653,9 @@ HAPError HAPUInt16CharacteristicHandleRead(
             &logObject, request->characteristic, request->service, request->accessory, "Calling read handler.");
     err = request->characteristic->callbacks.handleRead(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_OutOfResources ||
                 err == kHAPError_Busy);
@@ -682,6 +703,9 @@ HAPError HAPUInt16CharacteristicHandleWrite(
             &logObject, request->characteristic, request->service, request->accessory, "Calling write handler.");
     err = request->characteristic->callbacks.handleWrite(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                 err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
@@ -791,6 +815,9 @@ HAPError HAPUInt32CharacteristicHandleRead(
             &logObject, request->characteristic, request->service, request->accessory, "Calling read handler.");
     err = request->characteristic->callbacks.handleRead(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_OutOfResources ||
                 err == kHAPError_Busy);
@@ -838,6 +865,9 @@ HAPError HAPUInt32CharacteristicHandleWrite(
             &logObject, request->characteristic, request->service, request->accessory, "Calling write handler.");
     err = request->characteristic->callbacks.handleWrite(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                 err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
@@ -947,6 +977,9 @@ HAPError HAPUInt64CharacteristicHandleRead(
             &logObject, request->characteristic, request->service, request->accessory, "Calling read handler.");
     err = request->characteristic->callbacks.handleRead(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_OutOfResources ||
                 err == kHAPError_Busy);
@@ -994,6 +1027,9 @@ HAPError HAPUInt64CharacteristicHandleWrite(
             &logObject, request->characteristic, request->service, request->accessory, "Calling write handler.");
     err = request->characteristic->callbacks.handleWrite(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                 err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
@@ -1103,6 +1139,9 @@ HAPError HAPIntCharacteristicHandleRead(
             &logObject, request->characteristic, request->service, request->accessory, "Calling read handler.");
     err = request->characteristic->callbacks.handleRead(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_OutOfResources ||
                 err == kHAPError_Busy);
@@ -1150,6 +1189,9 @@ HAPError HAPIntCharacteristicHandleWrite(
             &logObject, request->characteristic, request->service, request->accessory, "Calling write handler.");
     err = request->characteristic->callbacks.handleWrite(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                 err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
@@ -1315,6 +1357,9 @@ HAPError HAPFloatCharacteristicHandleRead(
             &logObject, request->characteristic, request->service, request->accessory, "Calling read handler.");
     err = request->characteristic->callbacks.handleRead(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_OutOfResources ||
                 err == kHAPError_Busy);
@@ -1368,6 +1413,9 @@ HAPError HAPFloatCharacteristicHandleWrite(
             &logObject, request->characteristic, request->service, request->accessory, "Calling write handler.");
     err = request->characteristic->callbacks.handleWrite(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                 err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
@@ -1491,6 +1539,9 @@ HAPError HAPStringCharacteristicHandleRead(
             &logObject, request->characteristic, request->service, request->accessory, "Calling read handler.");
     err = request->characteristic->callbacks.handleRead(server, request, value, maxValueBytes, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_OutOfResources ||
                 err == kHAPError_Busy);
@@ -1562,6 +1613,9 @@ HAPError HAPStringCharacteristicHandleWrite(
             &logObject, request->characteristic, request->service, request->accessory, "Calling write handler.");
     err = request->characteristic->callbacks.handleWrite(server, request, value, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                 err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
@@ -1648,6 +1702,9 @@ HAPError HAPTLV8CharacteristicHandleRead(
             &logObject, request->characteristic, request->service, request->accessory, "Calling read handler.");
     err = request->characteristic->callbacks.handleRead(server, request, responseWriter, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_OutOfResources ||
                 err == kHAPError_Busy);
@@ -1686,6 +1743,9 @@ HAPError HAPTLV8CharacteristicHandleWrite(
             &logObject, request->characteristic, request->service, request->accessory, "Calling write handler.");
     err = request->characteristic->callbacks.handleWrite(server, request, requestReader, context);
     if (err) {
+        if (err == kHAPError_InProgress) {
+            return err;
+        }
         HAPAssert(
                 err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                 err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);

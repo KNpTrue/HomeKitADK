@@ -152,7 +152,7 @@ HAP_RESULT_USE_CHECK
 HAPError HAPIPAccessoryProtocolGetCharacteristicReadRequests(
         char* bytes,
         size_t numBytes,
-        HAPIPReadContextRef* readContexts,
+        HAPIPCharacteristicContextRef* readContexts,
         size_t maxReadContexts,
         size_t* numReadContexts,
         HAPIPReadRequestParameters* parameters) {
@@ -193,7 +193,8 @@ HAPError HAPIPAccessoryProtocolGetCharacteristicReadRequests(
                         HAPAssert(i <= numBytes);
                         if ((k < i) && ((i == numBytes) || ((bytes[i] < '0') || (bytes[i] > '9')))) {
                             if (*numReadContexts < maxReadContexts) {
-                                HAPIPReadContext* readContext = (HAPIPReadContext*) &readContexts[*numReadContexts];
+                                HAPIPCharacteristicContext* readContext =
+                                    (HAPIPCharacteristicContext*) &readContexts[*numReadContexts];
                                 HAPRawBufferZero(readContext, sizeof *readContext);
                                 readContext->aid = aid;
                                 readContext->iid = iid;
@@ -283,7 +284,7 @@ HAPError HAPIPAccessoryProtocolGetCharacteristicReadRequests(
 HAP_RESULT_USE_CHECK
 size_t HAPIPAccessoryProtocolGetNumCharacteristicReadResponseBytes(
         HAPAccessoryServerRef* server,
-        HAPIPReadContextRef* readContexts,
+        HAPIPCharacteristicContextRef* readContexts,
         size_t numReadContexts,
         HAPIPReadRequestParameters* parameters) {
     HAPPrecondition(server);
@@ -296,14 +297,14 @@ size_t HAPIPAccessoryProtocolGetNumCharacteristicReadResponseBytes(
     r = 22;
     i = 0;
     HAPAssert(i <= numReadContexts);
-    while ((i < numReadContexts) && (((HAPIPReadContext*) &readContexts[i])->status == 0)) {
+    while ((i < numReadContexts) && (((HAPIPCharacteristicContext*) &readContexts[i])->status == 0)) {
         i++;
     }
-    HAPIPReadContext* readContext = (HAPIPReadContext*) &readContexts[i];
+    HAPIPCharacteristicContext* readContext = (HAPIPCharacteristicContext*) &readContexts[i];
     HAPAssert((i == numReadContexts) || ((i < numReadContexts) && (readContext->status != 0)));
     success = i == numReadContexts;
     for (i = 0; i < numReadContexts; i++) {
-        readContext = (HAPIPReadContext*) &readContexts[i];
+        readContext = (HAPIPCharacteristicContext*) &readContexts[i];
 
         const HAPBaseCharacteristic* chr_ = GetCharacteristic(server, readContext->aid, readContext->iid);
         HAPAssert(chr_ || (readContext->status != 0));
@@ -385,7 +386,7 @@ size_t HAPIPAccessoryProtocolGetNumCharacteristicReadResponseBytes(
             r += 11 + (unsigned int) (n == 0 ? 0 : n * 4 + n - 1);
         }
         if (parameters->ev && chr_) {
-            r += 6 + (readContext->ev ? 4 : 5);
+            r += 6 + (readContext->read.ev ? 4 : 5);
         }
         if (parameters->meta && chr_) {
             HAPCharacteristicUnits unit = kHAPCharacteristicUnits_None;
@@ -544,7 +545,7 @@ size_t HAPIPAccessoryProtocolGetNumCharacteristicReadResponseBytes(
 HAP_RESULT_USE_CHECK
 HAPError HAPIPAccessoryProtocolGetCharacteristicReadResponseBytes(
         HAPAccessoryServerRef* server,
-        HAPIPReadContextRef* readContexts,
+        HAPIPCharacteristicContextRef* readContexts,
         size_t numReadContexts,
         HAPIPReadRequestParameters* parameters,
         HAPIPByteBuffer* buffer) {
@@ -560,10 +561,10 @@ HAPError HAPIPAccessoryProtocolGetCharacteristicReadResponseBytes(
 
     i = 0;
     HAPAssert(i <= numReadContexts);
-    while ((i < numReadContexts) && (((HAPIPReadContext*) &readContexts[i])->status == 0)) {
+    while ((i < numReadContexts) && (((HAPIPCharacteristicContext*) &readContexts[i])->status == 0)) {
         i++;
     }
-    HAPIPReadContext* readContext = (HAPIPReadContext*) &readContexts[i];
+    HAPIPCharacteristicContext* readContext = (HAPIPCharacteristicContext*) &readContexts[i];
     HAPAssert((i == numReadContexts) || ((i < numReadContexts) && (readContext->status != 0)));
     success = i == numReadContexts;
     err = HAPIPByteBufferAppendStringWithFormat(buffer, "{\"characteristics\":[");
@@ -571,7 +572,7 @@ HAPError HAPIPAccessoryProtocolGetCharacteristicReadResponseBytes(
         goto error;
     }
     for (i = 0; i < numReadContexts; i++) {
-        readContext = (HAPIPReadContext*) &readContexts[i];
+        readContext = (HAPIPCharacteristicContext*) &readContexts[i];
 
         const HAPBaseCharacteristic* chr_ = GetCharacteristic(server, readContext->aid, readContext->iid);
         HAPAssert(chr_ || (readContext->status != 0));
@@ -789,7 +790,7 @@ HAPError HAPIPAccessoryProtocolGetCharacteristicReadResponseBytes(
             }
         }
         if (parameters->ev && chr_) {
-            err = HAPIPByteBufferAppendStringWithFormat(buffer, ",\"ev\":%s", readContext->ev ? "true" : "false");
+            err = HAPIPByteBufferAppendStringWithFormat(buffer, ",\"ev\":%s", readContext->read.ev ? "true" : "false");
             if (err) {
                 goto error;
             }
@@ -1471,7 +1472,7 @@ static size_t read_characteristic_write_request(
         struct util_json_reader* r,
         char* buffer,
         size_t length,
-        HAPIPWriteContextRef* contexts,
+        HAPIPCharacteristicContextRef* contexts,
         size_t max_contexts,
         size_t* numReadContexts,
         HAPError* err) {
@@ -1505,11 +1506,11 @@ static size_t read_characteristic_write_request(
     }
     if ((parameters.aid.isDefined) && (parameters.iid.isDefined)) {
         if (*numReadContexts < max_contexts) {
-            HAPIPWriteContext* writeContext = (HAPIPWriteContext*) &contexts[*numReadContexts];
+            HAPIPCharacteristicContext* writeContext = (HAPIPCharacteristicContext*) &contexts[*numReadContexts];
             HAPRawBufferZero(writeContext, sizeof *writeContext);
             writeContext->aid = parameters.aid.value;
             writeContext->iid = parameters.iid.value;
-            writeContext->type = parameters.type;
+            writeContext->write.type = parameters.type;
             switch (parameters.type) {
                 case kHAPIPWriteValueType_None: {
                 } break;
@@ -1527,11 +1528,11 @@ static size_t read_characteristic_write_request(
                     writeContext->value.stringValue.numBytes = parameters.value.stringValue.numBytes;
                 } break;
             }
-            writeContext->ev = parameters.ev;
-            writeContext->authorizationData.bytes = parameters.authorizationData.bytes;
-            writeContext->authorizationData.numBytes = parameters.authorizationData.numBytes;
-            writeContext->remote = parameters.remote;
-            writeContext->response = parameters.response;
+            writeContext->write.ev = parameters.ev;
+            writeContext->write.authorizationData.bytes = parameters.authorizationData.bytes;
+            writeContext->write.authorizationData.numBytes = parameters.authorizationData.numBytes;
+            writeContext->write.remote = parameters.remote;
+            writeContext->write.response = parameters.response;
             (*numReadContexts)++;
         } else {
             HAPAssert(*numReadContexts == max_contexts);
@@ -1550,7 +1551,7 @@ HAP_RESULT_USE_CHECK
 HAPError HAPIPAccessoryProtocolGetCharacteristicWriteRequests(
         char* bytes,
         size_t numBytes,
-        HAPIPWriteContextRef* writeContexts,
+        HAPIPCharacteristicContextRef* writeContexts,
         size_t maxWriteContexts,
         size_t* numWriteContexts,
         bool* hasPID,
@@ -1677,7 +1678,7 @@ HAPError HAPIPAccessoryProtocolGetCharacteristicWriteRequests(
 HAP_RESULT_USE_CHECK
 size_t HAPIPAccessoryProtocolGetNumCharacteristicWriteResponseBytes(
         HAPAccessoryServerRef* server,
-        HAPIPWriteContextRef* writeContexts,
+        HAPIPCharacteristicContextRef* writeContexts,
         size_t numWriteContexts) {
     HAPPrecondition(server);
     HAPPrecondition(writeContexts);
@@ -1686,10 +1687,10 @@ size_t HAPIPAccessoryProtocolGetNumCharacteristicWriteResponseBytes(
 
     r = 22;
     for (i = 0; i < numWriteContexts; i++) {
-        HAPIPWriteContext* writeContext = (HAPIPWriteContext*) &writeContexts[i];
+        HAPIPCharacteristicContext* writeContext = (HAPIPCharacteristicContext*) &writeContexts[i];
         r += (i == 0 ? 25 : 26) + HAPUInt64GetNumDescriptionBytes(writeContext->aid) +
              HAPUInt64GetNumDescriptionBytes(writeContext->iid) + HAPInt32GetNumDescriptionBytes(writeContext->status);
-        if ((writeContext->status == 0) && writeContext->response) {
+        if ((writeContext->status == 0) && writeContext->write.response) {
             r += 9;
             const HAPBaseCharacteristic* chr_ = GetCharacteristic(server, writeContext->aid, writeContext->iid);
             HAPAssert(chr_);
@@ -1726,7 +1727,7 @@ size_t HAPIPAccessoryProtocolGetNumCharacteristicWriteResponseBytes(
 HAP_RESULT_USE_CHECK
 HAPError HAPIPAccessoryProtocolGetCharacteristicWriteResponseBytes(
         HAPAccessoryServerRef* server,
-        HAPIPWriteContextRef* writeContexts,
+        HAPIPCharacteristicContextRef* writeContexts,
         size_t numWriteContexts,
         HAPIPByteBuffer* buffer) {
     HAPPrecondition(server);
@@ -1743,7 +1744,7 @@ HAPError HAPIPAccessoryProtocolGetCharacteristicWriteResponseBytes(
         goto error;
     }
     for (i = 0; i < numWriteContexts; i++) {
-        HAPIPWriteContext* writeContext = (HAPIPWriteContext*) &writeContexts[i];
+        HAPIPCharacteristicContext* writeContext = (HAPIPCharacteristicContext*) &writeContexts[i];
         char aidDescription[64];
         err = HAPUInt64GetDescription(uintval(writeContext->aid), aidDescription, sizeof aidDescription);
         HAPAssert(!err);
@@ -1760,7 +1761,7 @@ HAPError HAPIPAccessoryProtocolGetCharacteristicWriteResponseBytes(
         if (err) {
             goto error;
         }
-        if ((writeContext->status == 0) && writeContext->response) {
+        if ((writeContext->status == 0) && writeContext->write.response) {
             const HAPBaseCharacteristic* chr_ = GetCharacteristic(server, writeContext->aid, writeContext->iid);
             HAPAssert(chr_);
             switch (chr_->format) {
@@ -1835,7 +1836,7 @@ error:
 HAP_RESULT_USE_CHECK
 size_t HAPIPAccessoryProtocolGetNumEventNotificationBytes(
         HAPAccessoryServerRef* server,
-        HAPIPReadContextRef* readContexts,
+        HAPIPCharacteristicContextRef* readContexts,
         size_t numReadContexts) {
     HAPPrecondition(server);
     HAPPrecondition(readContexts);
@@ -1844,7 +1845,7 @@ size_t HAPIPAccessoryProtocolGetNumEventNotificationBytes(
 
     r = 22;
     for (i = 0; i < numReadContexts; i++) {
-        HAPIPReadContext* readContext = (HAPIPReadContext*) &readContexts[i];
+        HAPIPCharacteristicContext* readContext = (HAPIPCharacteristicContext*) &readContexts[i];
 
         r += (i == 0 ? 24 : 25) + HAPUInt64GetNumDescriptionBytes(readContext->aid) +
              HAPUInt64GetNumDescriptionBytes(readContext->iid);
@@ -1886,7 +1887,7 @@ size_t HAPIPAccessoryProtocolGetNumEventNotificationBytes(
 HAP_RESULT_USE_CHECK
 HAPError HAPIPAccessoryProtocolGetEventNotificationBytes(
         HAPAccessoryServerRef* server,
-        HAPIPReadContextRef* readContexts,
+        HAPIPCharacteristicContextRef* readContexts,
         size_t numReadContexts,
         HAPIPByteBuffer* buffer) {
     HAPPrecondition(server);
@@ -1903,7 +1904,7 @@ HAPError HAPIPAccessoryProtocolGetEventNotificationBytes(
         goto error;
     }
     for (i = 0; i < numReadContexts; i++) {
-        HAPIPReadContext* readContext = (HAPIPReadContext*) &readContexts[i];
+        HAPIPCharacteristicContext* readContext = (HAPIPCharacteristicContext*) &readContexts[i];
 
         err = HAPIPByteBufferAppendStringWithFormat(buffer, "%s{\"aid\":", i == 0 ? "" : ",");
         if (err) {

@@ -21,10 +21,31 @@ extern "C" {
 
 #define kHAPIPAccessoryProtocolIID_AccessoryInformation ((uint64_t) 1)
 
+HAP_ENUM_BEGIN(uint8_t, HAPIPWriteValueType) {
+    kHAPIPWriteValueType_None,
+    kHAPIPWriteValueType_Int,
+    kHAPIPWriteValueType_UInt,
+    kHAPIPWriteValueType_Float,
+    kHAPIPWriteValueType_String
+} HAP_ENUM_END(uint8_t, HAPIPWriteValueType);
+
+HAP_ENUM_BEGIN(uint8_t, HAPIPEventNotificationState) {
+    kHAPIPEventNotificationState_Undefined,
+    kHAPIPEventNotificationState_Disabled,
+    kHAPIPEventNotificationState_Enabled,
+} HAP_ENUM_END(uint8_t, HAPIPEventNotificationState);
+
 typedef struct {
+    /** Accessory instance ID. */
     uint64_t aid;
+
+    /** Characteristic instance ID. */
     uint64_t iid;
+
+    /** Accessory server status code. */
     int32_t status;
+
+    /** Characteristic value. */
     union {
         int32_t intValue;
         uint64_t unsignedIntValue;
@@ -34,9 +55,25 @@ typedef struct {
             size_t numBytes;
         } stringValue;
     } value;
-    bool ev;
-} HAPIPReadContext;
-HAP_STATIC_ASSERT(sizeof(HAPIPReadContextRef) >= sizeof(HAPIPReadContext), HAPIPReadContext);
+
+    union {
+        struct {
+            bool ev;
+        } read;
+        struct {
+            HAPIPWriteValueType type;
+            HAPIPEventNotificationState ev;
+            bool remote;
+            bool response;
+            struct {
+                char* _Nullable bytes;
+                size_t numBytes;
+            } authorizationData;
+        } write;
+    };
+} HAPIPCharacteristicContext;
+HAP_STATIC_ASSERT(
+        sizeof(HAPIPCharacteristicContextRef) >= sizeof(HAPIPCharacteristicContext), HAPIPCharacteristicContext);
 
 typedef struct {
     bool meta;
@@ -49,7 +86,7 @@ HAP_RESULT_USE_CHECK
 HAPError HAPIPAccessoryProtocolGetCharacteristicReadRequests(
         char* bytes,
         size_t numBytes,
-        HAPIPReadContextRef* readContexts,
+        HAPIPCharacteristicContextRef* readContexts,
         size_t maxReadContexts,
         size_t* numReadContexts,
         HAPIPReadRequestParameters* parameters);
@@ -57,53 +94,17 @@ HAPError HAPIPAccessoryProtocolGetCharacteristicReadRequests(
 HAP_RESULT_USE_CHECK
 size_t HAPIPAccessoryProtocolGetNumCharacteristicReadResponseBytes(
         HAPAccessoryServerRef* server,
-        HAPIPReadContextRef* readContexts,
+        HAPIPCharacteristicContextRef* readContexts,
         size_t numReadContexts,
         HAPIPReadRequestParameters* parameters);
 
 HAP_RESULT_USE_CHECK
 HAPError HAPIPAccessoryProtocolGetCharacteristicReadResponseBytes(
         HAPAccessoryServerRef* server,
-        HAPIPReadContextRef* readContexts,
+        HAPIPCharacteristicContextRef* readContexts,
         size_t numReadContexts,
         HAPIPReadRequestParameters* parameters,
         HAPIPByteBuffer* buffer);
-
-HAP_ENUM_BEGIN(uint8_t, HAPIPWriteValueType) { kHAPIPWriteValueType_None,
-                                               kHAPIPWriteValueType_Int,
-                                               kHAPIPWriteValueType_UInt,
-                                               kHAPIPWriteValueType_Float,
-                                               kHAPIPWriteValueType_String } HAP_ENUM_END(uint8_t, HAPIPWriteValueType);
-
-HAP_ENUM_BEGIN(uint8_t, HAPIPEventNotificationState) {
-    kHAPIPEventNotificationState_Undefined,
-    kHAPIPEventNotificationState_Disabled,
-    kHAPIPEventNotificationState_Enabled,
-} HAP_ENUM_END(uint8_t, HAPIPEventNotificationState);
-
-typedef struct {
-    uint64_t aid;
-    uint64_t iid;
-    int32_t status;
-    HAPIPWriteValueType type;
-    union {
-        int32_t intValue;
-        uint64_t unsignedIntValue;
-        float floatValue;
-        struct {
-            char* _Nullable bytes;
-            size_t numBytes;
-        } stringValue;
-    } value;
-    struct {
-        char* _Nullable bytes;
-        size_t numBytes;
-    } authorizationData;
-    bool remote;
-    HAPIPEventNotificationState ev;
-    bool response;
-} HAPIPWriteContext;
-HAP_STATIC_ASSERT(sizeof(HAPIPWriteContextRef) >= sizeof(HAPIPWriteContext), HAPIPWriteContext);
 
 /**
  * Parses a PUT /characteristic request.
@@ -124,7 +125,7 @@ HAP_RESULT_USE_CHECK
 HAPError HAPIPAccessoryProtocolGetCharacteristicWriteRequests(
         char* bytes,
         size_t numBytes,
-        HAPIPWriteContextRef* writeContexts,
+        HAPIPCharacteristicContextRef* writeContexts,
         size_t maxWriteContexts,
         size_t* numWriteContexts,
         bool* hasPID,
@@ -133,26 +134,26 @@ HAPError HAPIPAccessoryProtocolGetCharacteristicWriteRequests(
 HAP_RESULT_USE_CHECK
 size_t HAPIPAccessoryProtocolGetNumCharacteristicWriteResponseBytes(
         HAPAccessoryServerRef* server,
-        HAPIPWriteContextRef* writeContexts,
+        HAPIPCharacteristicContextRef* writeContexts,
         size_t numWriteContexts);
 
 HAP_RESULT_USE_CHECK
 HAPError HAPIPAccessoryProtocolGetCharacteristicWriteResponseBytes(
         HAPAccessoryServerRef* server,
-        HAPIPWriteContextRef* writeContexts,
+        HAPIPCharacteristicContextRef* writeContexts,
         size_t numWriteContexts,
         HAPIPByteBuffer* buffer);
 
 HAP_RESULT_USE_CHECK
 size_t HAPIPAccessoryProtocolGetNumEventNotificationBytes(
         HAPAccessoryServerRef* server,
-        HAPIPReadContextRef* readContexts,
+        HAPIPCharacteristicContextRef* readContexts,
         size_t numReadContexts);
 
 HAP_RESULT_USE_CHECK
 HAPError HAPIPAccessoryProtocolGetEventNotificationBytes(
         HAPAccessoryServerRef* server,
-        HAPIPReadContextRef* readContexts,
+        HAPIPCharacteristicContextRef* readContexts,
         size_t numReadContexts,
         HAPIPByteBuffer* buffer);
 

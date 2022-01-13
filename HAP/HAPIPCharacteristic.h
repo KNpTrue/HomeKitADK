@@ -50,6 +50,96 @@ size_t HAPCharacteristicGetNumEnabledProperties(const HAPCharacteristic* charact
 HAP_RESULT_USE_CHECK
 HAPCharacteristicUnits HAPCharacteristicGetUnit(const HAPCharacteristic* characteristic);
 
+void HAPIPCharacteristicContextSetDataValue(
+        HAPIPCharacteristicContextRef* context,
+        HAPIPByteBuffer* dataBuffer,
+        const void* valueBytes,
+        size_t numValueBytes);
+
+void HAPIPCharacteristicContextSetUIntValue(
+        HAPIPCharacteristicContextRef* context,
+        uint64_t value);
+
+void HAPIPCharacteristicContextSetIntValue(
+        HAPIPCharacteristicContextRef* context,
+        int32_t value);
+
+void HAPIPCharacteristicContextSetFloatValue(
+        HAPIPCharacteristicContextRef* context,
+        float value);
+
+void HAPIPCharacteristicContextSetStringValue(
+        HAPIPCharacteristicContextRef* context,
+        HAPIPByteBuffer* dataBuffer,
+        const char* value);
+
+void HAPIPCharacteristicContextSetTLV8Value(
+        HAPIPCharacteristicContextRef* context,
+        HAPIPByteBuffer* dataBuffer,
+        HAPTLVWriterRef* writer);
+
+/**
+ * Converts a characteristic read request error to the corresponding HAP status code.
+ *
+ * @param      error                Read request error.
+ *
+ * @return HAP read request status code.
+ *
+ * @see HomeKit Accessory Protocol Specification R14
+ *      Table 6-11 HAP Status Codes
+ */
+HAP_RESULT_USE_CHECK
+int32_t HAPIPCharacteristicConvertReadErrorToStatusCode(HAPError error);
+
+/**
+ * Converts a characteristic write request error to the corresponding HAP status code.
+ *
+ * @param      error                Write request error.
+ *
+ * @return HAP write request status code.
+ *
+ * @see HomeKit Accessory Protocol Specification R14
+ *      Table 6-11 HAP Status Codes
+ */
+HAP_RESULT_USE_CHECK
+int32_t HAPIPCharacteristicConvertWriteErrorToStatusCode(HAPError error);
+
+void HAPIPCharacteristicHandleReadRequest(
+        HAPIPSessionDescriptorRef* session,
+        const HAPCharacteristic* characteristic,
+        const HAPService* service,
+        const HAPAccessory* accessory,
+        HAPIPCharacteristicContextRef* context,
+        HAPIPByteBuffer* dataBuffer);
+
+void HAPIPCharacteristicHandleWriteRequest(
+        HAPIPSessionDescriptorRef* session,
+        const HAPCharacteristic* characteristic,
+        const HAPService* service,
+        const HAPAccessory* accessory,
+        HAPIPCharacteristicContextRef* context,
+        HAPIPByteBuffer* dataBuffer);
+
+void HAPIPCharacteristicFinshWriteRequest(
+        HAPIPSessionDescriptorRef* session,
+        const HAPCharacteristic* characteristic,
+        const HAPService* service,
+        const HAPAccessory* accessory,
+        HAPIPCharacteristicContextRef* context,
+        HAPIPByteBuffer* dataBuffer);
+
+void HAPIPCharacteristicHandleSubscribeRequest(
+        HAPIPSessionDescriptorRef* session,
+        const HAPCharacteristic* characteristic,
+        const HAPService* service,
+        const HAPAccessory* accessory);
+
+void HAPIPCharacteristicHandleUnsubscribeRequest(
+        HAPIPSessionDescriptorRef* session,
+        const HAPCharacteristic* characteristic,
+        const HAPService* service,
+        const HAPAccessory* accessory);
+
 #if __has_feature(nullability)
 #pragma clang assume_nonnull end
 #endif

@@ -22,48 +22,6 @@ static const HAPLogObject logObject = { .subsystem = kHAP_LogSubsystem, .categor
 #define kHAPIPAccessoryServerCharacter_Space ((char) 32)
 
 /**
- * HAP Status Codes.
- *
- * @see HomeKit Accessory Protocol Specification R14
- *      Table 6-11 HAP Status Codes
- */
-/**@{*/
-/** This specifies a success for the request. */
-#define kHAPIPAccessoryServerStatusCode_Success ((int32_t) 0)
-
-/** Request denied due to insufficient privileges. */
-#define kHAPIPAccessoryServerStatusCode_InsufficientPrivileges ((int32_t) -70401)
-
-/** Unable to perform operation with requested service or characteristic. */
-#define kHAPIPAccessoryServerStatusCode_UnableToPerformOperation ((int32_t) -70402)
-
-/** Resource is busy, try again. */
-#define kHAPIPAccessoryServerStatusCode_ResourceIsBusy ((int32_t) -70403)
-
-/** Cannot write to read only characteristic. */
-#define kHAPIPAccessoryServerStatusCode_WriteToReadOnlyCharacteristic ((int32_t) -70404)
-
-/** Cannot read from a write only characteristic. */
-#define kHAPIPAccessoryServerStatusCode_ReadFromWriteOnlyCharacteristic ((int32_t) -70405)
-
-/** Notification is not supported for characteristic. */
-#define kHAPIPAccessoryServerStatusCode_NotificationNotSupported ((int32_t) -70406)
-
-/** Out of resources to process request. */
-#define kHAPIPAccessoryServerStatusCode_OutOfResources ((int32_t) -70407)
-
-/** Resource does not exist. */
-#define kHAPIPAccessoryServerStatusCode_ResourceDoesNotExist ((int32_t) -70409)
-
-/** Accessory received an invalid value in a write request. */
-#define kHAPIPAccessoryServerStatusCode_InvalidValueInWrite ((int32_t) -70410)
-
-/** Insufficient Authorization. */
-#define kHAPIPAccessoryServerStatusCode_InsufficientAuthorization ((int32_t) -70411)
-
-/**@}*/
-
-/**
  * Predefined HTTP/1.1 response indicating successful request completion with an empty response body.
  */
 #define kHAPIPAccessoryServerResponse_NoContent ("HTTP/1.1 204 No Content\r\n\r\n")
@@ -144,6 +102,12 @@ static const HAPLogObject logObject = { .subsystem = kHAP_LogSubsystem, .categor
  * Maximum delay during which event notifications will be coalesced into a single message.
  */
 #define kHAPIPAccessoryServer_MaxEventNotificationDelay ((HAPTime)(1 * HAPSecond))
+
+static void HandleTCPStreamEvent(
+        HAPPlatformTCPStreamManagerRef tcpStreamManager,
+        HAPPlatformTCPStreamRef tcpStream,
+        HAPPlatformTCPStreamEvent event,
+        void* _Nullable context);
 
 static void log_result(HAPLogType type, char* msg, int result, const char* function, const char* file, int line) {
     HAPAssert(msg);
@@ -238,6 +202,20 @@ static void get_db_ctx(
     }
 }
 
+static HAPIPCharacteristicContext* get_ctx_by_iid(
+        size_t aid,
+        size_t iid,
+        HAPIPCharacteristicContextRef* contexts,
+        size_t numContexts) {
+    for (size_t i = 0; i < numContexts; i++) {
+        HAPIPCharacteristicContext* context = (HAPIPCharacteristicContext*) &contexts[i];
+        if (context->aid == aid && context->iid == iid) {
+            return context;
+        }
+    }
+    return NULL;
+}
+
 static void publish_homeKit_service(HAPAccessoryServerRef* server_) {
     HAPPrecondition(server_);
     HAPAccessoryServer* server = (HAPAccessoryServer*) server_;
@@ -253,21 +231,21 @@ static void HandlePendingTCPStream(HAPPlatformTCPStreamManagerRef tcpStreamManag
 
 static void schedule_max_idle_time_timer(HAPAccessoryServerRef* server_);
 
-static void HAPIPSessionDestroy(HAPIPSession* ipSession) {
+static void HAPIPSessionReset(HAPIPSession* ipSession) {
     HAPPrecondition(ipSession);
+    HAPPrecondition(ipSession->inboundBuffer.bytes);
+    HAPPrecondition(ipSession->outboundBuffer.bytes);
+    HAPPrecondition(ipSession->scratchBuffer.bytes);
+    HAPPrecondition(ipSession->eventNotifications);
+    HAPPrecondition(ipSession->contexts);
 
-    HAPIPSessionDescriptor* session = (HAPIPSessionDescriptor*) &ipSession->descriptor;
-    if (!session->server) {
-        return;
-    }
-
-    HAPLogDebug(&logObject, "session:%p:releasing session", (const void*) session);
-
-    HAPRawBufferZero(&ipSession->descriptor, sizeof ipSession->descriptor);
+    HAPRawBufferZero(&ipSession->descriptor, sizeof(ipSession->descriptor));
     HAPRawBufferZero(ipSession->inboundBuffer.bytes, ipSession->inboundBuffer.numBytes);
     HAPRawBufferZero(ipSession->outboundBuffer.bytes, ipSession->outboundBuffer.numBytes);
-    HAPRawBufferZero(
-            ipSession->eventNotifications, ipSession->numEventNotifications * sizeof *ipSession->eventNotifications);
+    HAPRawBufferZero(ipSession->scratchBuffer.bytes, ipSession->scratchBuffer.numBytes);
+    HAPRawBufferZero(ipSession->contexts, ipSession->numContexts * sizeof(*ipSession->contexts));
+    HAPRawBufferZero(ipSession->eventNotifications,
+        ipSession->numEventNotifications * sizeof(*ipSession->eventNotifications));
 }
 
 static void collect_garbage(HAPAccessoryServerRef* server_) {
@@ -288,7 +266,8 @@ static void collect_garbage(HAPAccessoryServerRef* server_) {
         }
 
         if (session->state == kHAPIPSessionState_Idle) {
-            HAPIPSessionDestroy(ipSession);
+            HAPIPSessionReset(ipSession);
+            HAPLogDebug(&logObject, "session:%p:released", (const void*) session);
             HAPAssert(server->ip.numSessions > 0);
             server->ip.numSessions--;
         } else {
@@ -459,12 +438,6 @@ static void RegisterSession(HAPIPSessionDescriptor* session) {
     }
 }
 
-static void handle_characteristic_unsubscribe_request(
-        HAPIPSessionDescriptor* session,
-        const HAPCharacteristic* chr,
-        const HAPService* svc,
-        const HAPAccessory* acc);
-
 static void CloseSession(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
@@ -489,7 +462,7 @@ static void CloseSession(HAPIPSessionDescriptor* session) {
             session->numEventNotificationFlags--;
         }
         session->numEventNotifications--;
-        handle_characteristic_unsubscribe_request(session, characteristic, service, accessory);
+        HAPIPCharacteristicHandleUnsubscribeRequest((HAPIPSessionDescriptorRef*) session, characteristic, service, accessory);
     }
     if (session->securitySession.isOpen) {
         HAPLogDebug(&logObject, "session:%p:closing security context", (const void*) session);
@@ -621,7 +594,7 @@ static void put_prepare(HAPIPSessionDescriptor* session) {
 
 static void write_characteristic_write_response(
         HAPIPSessionDescriptor* session,
-        HAPIPWriteContextRef* contexts,
+        HAPIPCharacteristicContextRef* contexts,
         size_t contexts_count) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
@@ -698,8 +671,10 @@ static void schedule_event_notifications(HAPAccessoryServerRef* server_) {
             continue;
         }
 
-        if ((session->state == kHAPIPSessionState_Reading) && (session->inboundBuffer.position == 0) &&
-            (session->numEventNotificationFlags > 0)) {
+        if (session->state == kHAPIPSessionState_Reading &&
+            session->inboundBuffer.position == 0 &&
+            session->inProgress.state == kHAPIPSessionInProgressState_None &&
+            session->numEventNotificationFlags > 0) {
             write_event_notifications(session);
         }
     }
@@ -714,8 +689,10 @@ static void schedule_event_notifications(HAPAccessoryServerRef* server_) {
             continue;
         }
 
-        if ((session->state == kHAPIPSessionState_Reading) && (session->inboundBuffer.position == 0) &&
-            (session->numEventNotificationFlags > 0)) {
+        if (session->state == kHAPIPSessionState_Reading &&
+            session->inboundBuffer.position == 0 &&
+            session->inProgress.state == kHAPIPSessionInProgressState_None &&
+            session->numEventNotificationFlags > 0) {
             HAPAssert(clock_now_ms >= session->eventNotificationStamp);
             HAPTime dt_ms = clock_now_ms - session->eventNotificationStamp;
             HAP_DIAGNOSTIC_PUSH
@@ -755,518 +732,50 @@ static void schedule_event_notifications(HAPAccessoryServerRef* server_) {
     }
 }
 
-static void handle_characteristic_subscribe_request(
-        HAPIPSessionDescriptor* session,
-        const HAPCharacteristic* chr,
-        const HAPService* svc,
-        const HAPAccessory* acc) {
-    HAPPrecondition(session);
-    HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.isOpen);
-    HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
-    HAPPrecondition(chr);
-    HAPPrecondition(svc);
-    HAPPrecondition(acc);
-
-    HAPAccessoryServerHandleSubscribe(HAPNonnull(session->server), &session->securitySession.session, chr, svc, acc);
+static HAPIPSessionDescriptor* get_session_desc_by_session_ref(HAPAccessoryServer* server, HAPSessionRef* session)
+{
+    for (size_t i = 0; i < server->ip.storage->numSessions; i++) {
+        HAPIPSession* ipSession = &server->ip.storage->sessions[i];
+        HAPIPSessionDescriptor* desc = (HAPIPSessionDescriptor*)&ipSession->descriptor;
+        if (&desc->securitySession.session == session) {
+            return desc;
+        }
+    }
+    return NULL;
 }
 
-static void handle_characteristic_unsubscribe_request(
-        HAPIPSessionDescriptor* session,
-        const HAPCharacteristic* chr,
-        const HAPService* svc,
-        const HAPAccessory* acc) {
-    HAPPrecondition(session);
-    HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.isOpen);
-    HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
-    HAPPrecondition(chr);
-    HAPPrecondition(svc);
-    HAPPrecondition(acc);
+static void output(HAPIPSessionDescriptor* session) {
+    HAPAssert(session->outboundBuffer.data);
+    HAPAssert(session->outboundBuffer.position <= session->outboundBuffer.limit);
+    HAPAssert(session->outboundBuffer.limit <= session->outboundBuffer.capacity);
 
-    HAPAccessoryServerHandleUnsubscribe(HAPNonnull(session->server), &session->securitySession.session, chr, svc, acc);
-}
+    size_t encrypted_length;
 
-static void handle_characteristic_read_request(
-        HAPIPSessionDescriptor* session,
-        const HAPCharacteristic* chr,
-        const HAPService* svc,
-        const HAPAccessory* acc,
-        HAPIPReadContextRef* ctx,
-        HAPIPByteBuffer* data_buffer);
+    HAPIPByteBufferFlip(&session->outboundBuffer);
+    HAPLogBufferDebug(
+            &logObject,
+            session->outboundBuffer.data,
+            session->outboundBuffer.limit,
+            "session:%p:<",
+            (const void*) session);
 
-/**
- * Converts a characteristic write request error to the corresponding HAP status code.
- *
- * @param      error                Write request error.
- *
- * @return HAP write request status code.
- *
- * @see HomeKit Accessory Protocol Specification R14
- *      Table 6-11 HAP Status Codes
- */
-static int32_t ConvertCharacteristicWriteErrorToStatusCode(HAPError error) {
-    switch (error) {
-        case kHAPError_None: {
-            return kHAPIPAccessoryServerStatusCode_Success;
+    if (session->securitySession.isSecured) {
+        encrypted_length = HAPIPSecurityProtocolGetNumEncryptedBytes(
+                session->outboundBuffer.limit - session->outboundBuffer.position);
+        if (encrypted_length > session->outboundBuffer.capacity - session->outboundBuffer.position) {
+            HAPLog(&logObject, "Out of resources (outbound buffer too small).");
+            session->outboundBuffer.limit = session->outboundBuffer.capacity;
+            write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_OutOfResources);
+            HAPIPByteBufferFlip(&session->outboundBuffer);
+            encrypted_length = HAPIPSecurityProtocolGetNumEncryptedBytes(
+                    session->outboundBuffer.limit - session->outboundBuffer.position);
+            HAPAssert(encrypted_length <= session->outboundBuffer.capacity - session->outboundBuffer.position);
         }
-        case kHAPError_Unknown: {
-            return kHAPIPAccessoryServerStatusCode_UnableToPerformOperation;
-        }
-        case kHAPError_InvalidState: {
-            return kHAPIPAccessoryServerStatusCode_UnableToPerformOperation;
-        }
-        case kHAPError_InvalidData: {
-            return kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-        }
-        case kHAPError_OutOfResources: {
-            return kHAPIPAccessoryServerStatusCode_OutOfResources;
-        }
-        case kHAPError_NotAuthorized: {
-            return kHAPIPAccessoryServerStatusCode_InsufficientAuthorization;
-        }
-        case kHAPError_Busy: {
-            return kHAPIPAccessoryServerStatusCode_ResourceIsBusy;
-        }
-        case kHAPError_InProgress: {
-            HAPFatalError();
-        }
+        HAPIPSecurityProtocolEncryptData(
+                HAPNonnull(session->server), &session->securitySession.session, &session->outboundBuffer);
+        HAPAssert(encrypted_length == session->outboundBuffer.limit - session->outboundBuffer.position);
     }
-    HAPFatalError();
-}
-
-static void handle_characteristic_write_request(
-        HAPIPSessionDescriptor* session,
-        const HAPCharacteristic* characteristic,
-        const HAPService* service,
-        const HAPAccessory* accessory,
-        HAPIPWriteContextRef* context,
-        HAPIPByteBuffer* dataBuffer) {
-    HAPPrecondition(session);
-    HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.isOpen);
-    HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
-    HAPPrecondition(characteristic);
-    HAPPrecondition(service);
-    HAPPrecondition(accessory);
-    HAPPrecondition(context);
-    HAPPrecondition(dataBuffer);
-
-    HAPError err;
-
-    const HAPBaseCharacteristic* baseCharacteristic = characteristic;
-
-    HAPIPWriteContext* writeContext = (HAPIPWriteContext*) context;
-    HAPAssert(baseCharacteristic->iid == writeContext->iid);
-
-    if ((writeContext->type == kHAPIPWriteValueType_None) &&
-        (writeContext->ev == kHAPIPEventNotificationState_Undefined)) {
-        writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-        return;
-    }
-
-    if (writeContext->ev != kHAPIPEventNotificationState_Undefined) {
-        if (HAPCharacteristicReadRequiresAdminPermissions(baseCharacteristic) &&
-            !HAPSessionControllerIsAdmin(&session->securitySession.session)) {
-            writeContext->status = kHAPIPAccessoryServerStatusCode_InsufficientPrivileges;
-        } else if (!baseCharacteristic->properties.supportsEventNotification) {
-            writeContext->status = kHAPIPAccessoryServerStatusCode_NotificationNotSupported;
-        } else {
-            writeContext->status = kHAPIPAccessoryServerStatusCode_Success;
-            HAPAssert(session->numEventNotifications <= session->maxEventNotifications);
-            size_t i = 0;
-            while ((i < session->numEventNotifications) &&
-                   ((((HAPIPEventNotification*) &session->eventNotifications[i])->aid != writeContext->aid) ||
-                    (((HAPIPEventNotification*) &session->eventNotifications[i])->iid != writeContext->iid))) {
-                i++;
-            }
-            HAPAssert(
-                    (i == session->numEventNotifications) ||
-                    ((i < session->numEventNotifications) &&
-                     (((HAPIPEventNotification*) &session->eventNotifications[i])->aid == writeContext->aid) &&
-                     (((HAPIPEventNotification*) &session->eventNotifications[i])->iid == writeContext->iid)));
-            if (i == session->numEventNotifications) {
-                if (writeContext->ev == kHAPIPEventNotificationState_Enabled) {
-                    if (i == session->maxEventNotifications) {
-                        writeContext->status = kHAPIPAccessoryServerStatusCode_OutOfResources;
-                    } else {
-                        ((HAPIPEventNotification*) &session->eventNotifications[i])->aid = writeContext->aid;
-                        ((HAPIPEventNotification*) &session->eventNotifications[i])->iid = writeContext->iid;
-                        ((HAPIPEventNotification*) &session->eventNotifications[i])->flag = false;
-                        session->numEventNotifications++;
-                        handle_characteristic_subscribe_request(session, characteristic, service, accessory);
-                    }
-                }
-            } else if (writeContext->ev == kHAPIPEventNotificationState_Disabled) {
-                session->numEventNotifications--;
-                if (((HAPIPEventNotification*) &session->eventNotifications[i])->flag) {
-                    HAPAssert(session->numEventNotificationFlags > 0);
-                    session->numEventNotificationFlags--;
-                }
-                while (i < session->numEventNotifications) {
-                    HAPRawBufferCopyBytes(
-                            &session->eventNotifications[i],
-                            &session->eventNotifications[i + 1],
-                            sizeof session->eventNotifications[i]);
-                    i++;
-                }
-                HAPAssert(i == session->numEventNotifications);
-                handle_characteristic_unsubscribe_request(session, characteristic, service, accessory);
-            }
-        }
-    }
-
-    if (writeContext->type != kHAPIPWriteValueType_None) {
-        if (HAPCharacteristicWriteRequiresAdminPermissions(baseCharacteristic) &&
-            !HAPSessionControllerIsAdmin(&session->securitySession.session)) {
-            writeContext->status = kHAPIPAccessoryServerStatusCode_InsufficientPrivileges;
-            return;
-        }
-        if ((baseCharacteristic->properties.ip.supportsWriteResponse || writeContext->response) &&
-            HAPCharacteristicReadRequiresAdminPermissions(baseCharacteristic) &&
-            !HAPSessionControllerIsAdmin(&session->securitySession.session)) {
-            writeContext->status = kHAPIPAccessoryServerStatusCode_InsufficientPrivileges;
-            return;
-        }
-        if (baseCharacteristic->properties.writable) {
-            writeContext->status = kHAPIPAccessoryServerStatusCode_Success;
-            const void* authorizationDataBytes = NULL;
-            size_t numAuthorizationDataBytes = 0;
-            if (writeContext->authorizationData.bytes) {
-                int r = util_base64_decode(
-                        writeContext->authorizationData.bytes,
-                        writeContext->authorizationData.numBytes,
-                        writeContext->authorizationData.bytes,
-                        writeContext->authorizationData.numBytes,
-                        &writeContext->authorizationData.numBytes);
-                if (r == 0) {
-                    authorizationDataBytes = writeContext->authorizationData.bytes;
-                    numAuthorizationDataBytes = writeContext->authorizationData.numBytes;
-                } else {
-                    writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                }
-            }
-            if (writeContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                switch (baseCharacteristic->format) {
-                    case kHAPCharacteristicFormat_Data: {
-                        if (writeContext->type == kHAPIPWriteValueType_String) {
-                            HAPAssert(writeContext->value.stringValue.bytes);
-                            int r = util_base64_decode(
-                                    writeContext->value.stringValue.bytes,
-                                    writeContext->value.stringValue.numBytes,
-                                    writeContext->value.stringValue.bytes,
-                                    writeContext->value.stringValue.numBytes,
-                                    &writeContext->value.stringValue.numBytes);
-                            if (r == 0) {
-                                HAPAssert(writeContext->value.stringValue.bytes);
-                                err = HAPDataCharacteristicHandleWrite(
-                                        HAPNonnull(session->server),
-                                        &(const HAPDataCharacteristicWriteRequest) {
-                                                .transportType = kHAPTransportType_IP,
-                                                .session = &session->securitySession.session,
-                                                .characteristic = (const HAPDataCharacteristic*) baseCharacteristic,
-                                                .service = service,
-                                                .accessory = accessory,
-                                                .remote = writeContext->remote,
-                                                .authorizationData = { .bytes = authorizationDataBytes,
-                                                                       .numBytes = numAuthorizationDataBytes } },
-                                        HAPNonnull(writeContext->value.stringValue.bytes),
-                                        writeContext->value.stringValue.numBytes,
-                                        HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-                                writeContext->status = ConvertCharacteristicWriteErrorToStatusCode(err);
-                            } else {
-                                writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                            }
-                        } else {
-                            writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                        }
-                    } break;
-                    case kHAPCharacteristicFormat_Bool: {
-                        if ((writeContext->type == kHAPIPWriteValueType_UInt) &&
-                            (writeContext->value.unsignedIntValue <= 1)) {
-                            err = HAPBoolCharacteristicHandleWrite(
-                                    HAPNonnull(session->server),
-                                    &(const HAPBoolCharacteristicWriteRequest) {
-                                            .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession.session,
-                                            .characteristic = (const HAPBoolCharacteristic*) baseCharacteristic,
-                                            .service = service,
-                                            .accessory = accessory,
-                                            .remote = writeContext->remote,
-                                            .authorizationData = { .bytes = authorizationDataBytes,
-                                                                   .numBytes = numAuthorizationDataBytes } },
-                                    (bool) writeContext->value.unsignedIntValue,
-                                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-                            writeContext->status = ConvertCharacteristicWriteErrorToStatusCode(err);
-                        } else {
-                            writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                        }
-                    } break;
-                    case kHAPCharacteristicFormat_UInt8: {
-                        if ((writeContext->type == kHAPIPWriteValueType_UInt) &&
-                            (writeContext->value.unsignedIntValue <= UINT8_MAX)) {
-                            err = HAPUInt8CharacteristicHandleWrite(
-                                    HAPNonnull(session->server),
-                                    &(const HAPUInt8CharacteristicWriteRequest) {
-                                            .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession.session,
-                                            .characteristic = (const HAPUInt8Characteristic*) baseCharacteristic,
-                                            .service = service,
-                                            .accessory = accessory,
-                                            .remote = writeContext->remote,
-                                            .authorizationData = { .bytes = authorizationDataBytes,
-                                                                   .numBytes = numAuthorizationDataBytes } },
-                                    (uint8_t) writeContext->value.unsignedIntValue,
-                                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-                            writeContext->status = ConvertCharacteristicWriteErrorToStatusCode(err);
-                        } else {
-                            writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                        }
-                    } break;
-                    case kHAPCharacteristicFormat_UInt16: {
-                        if ((writeContext->type == kHAPIPWriteValueType_UInt) &&
-                            (writeContext->value.unsignedIntValue <= UINT16_MAX)) {
-                            err = HAPUInt16CharacteristicHandleWrite(
-                                    HAPNonnull(session->server),
-                                    &(const HAPUInt16CharacteristicWriteRequest) {
-                                            .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession.session,
-                                            .characteristic = (const HAPUInt16Characteristic*) baseCharacteristic,
-                                            .service = service,
-                                            .accessory = accessory,
-                                            .remote = writeContext->remote,
-                                            .authorizationData = { .bytes = authorizationDataBytes,
-                                                                   .numBytes = numAuthorizationDataBytes } },
-                                    (uint16_t) writeContext->value.unsignedIntValue,
-                                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-                            writeContext->status = ConvertCharacteristicWriteErrorToStatusCode(err);
-                        } else {
-                            writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                        }
-                    } break;
-                    case kHAPCharacteristicFormat_UInt32: {
-                        if ((writeContext->type == kHAPIPWriteValueType_UInt) &&
-                            (writeContext->value.unsignedIntValue <= UINT32_MAX)) {
-                            err = HAPUInt32CharacteristicHandleWrite(
-                                    HAPNonnull(session->server),
-                                    &(const HAPUInt32CharacteristicWriteRequest) {
-                                            .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession.session,
-                                            .characteristic = (const HAPUInt32Characteristic*) baseCharacteristic,
-                                            .service = service,
-                                            .accessory = accessory,
-                                            .remote = writeContext->remote,
-                                            .authorizationData = { .bytes = authorizationDataBytes,
-                                                                   .numBytes = numAuthorizationDataBytes } },
-                                    (uint32_t) writeContext->value.unsignedIntValue,
-                                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-                            writeContext->status = ConvertCharacteristicWriteErrorToStatusCode(err);
-                        } else {
-                            writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                        }
-                    } break;
-                    case kHAPCharacteristicFormat_UInt64: {
-                        if (writeContext->type == kHAPIPWriteValueType_UInt) {
-                            err = HAPUInt64CharacteristicHandleWrite(
-                                    HAPNonnull(session->server),
-                                    &(const HAPUInt64CharacteristicWriteRequest) {
-                                            .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession.session,
-                                            .characteristic = (const HAPUInt64Characteristic*) baseCharacteristic,
-                                            .service = service,
-                                            .accessory = accessory,
-                                            .remote = writeContext->remote,
-                                            .authorizationData = { .bytes = authorizationDataBytes,
-                                                                   .numBytes = numAuthorizationDataBytes } },
-                                    writeContext->value.unsignedIntValue,
-                                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-                            writeContext->status = ConvertCharacteristicWriteErrorToStatusCode(err);
-                        } else {
-                            writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                        }
-                    } break;
-                    case kHAPCharacteristicFormat_Int: {
-                        if ((writeContext->type == kHAPIPWriteValueType_UInt) &&
-                            (writeContext->value.unsignedIntValue <= INT32_MAX)) {
-                            writeContext->value.intValue = (int32_t) writeContext->value.unsignedIntValue;
-                            writeContext->type = kHAPIPWriteValueType_Int;
-                        }
-                        if (writeContext->type == kHAPIPWriteValueType_Int) {
-                            err = HAPIntCharacteristicHandleWrite(
-                                    HAPNonnull(session->server),
-                                    &(const HAPIntCharacteristicWriteRequest) {
-                                            .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession.session,
-                                            .characteristic = (const HAPIntCharacteristic*) baseCharacteristic,
-                                            .service = service,
-                                            .accessory = accessory,
-                                            .remote = writeContext->remote,
-                                            .authorizationData = { .bytes = authorizationDataBytes,
-                                                                   .numBytes = numAuthorizationDataBytes } },
-                                    writeContext->value.intValue,
-                                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-                            writeContext->status = ConvertCharacteristicWriteErrorToStatusCode(err);
-                        } else {
-                            writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                        }
-                    } break;
-                    case kHAPCharacteristicFormat_Float: {
-                        if ((writeContext->type == kHAPIPWriteValueType_Int) &&
-                            (writeContext->value.intValue >= -FLT_MAX) && (writeContext->value.intValue <= FLT_MAX)) {
-                            writeContext->value.floatValue = (float) writeContext->value.intValue;
-                            writeContext->type = kHAPIPWriteValueType_Float;
-                        }
-                        if ((writeContext->type == kHAPIPWriteValueType_UInt) &&
-                            (writeContext->value.unsignedIntValue <= FLT_MAX)) {
-                            writeContext->value.floatValue = (float) writeContext->value.unsignedIntValue;
-                            writeContext->type = kHAPIPWriteValueType_Float;
-                        }
-                        if (writeContext->type == kHAPIPWriteValueType_Float) {
-                            err = HAPFloatCharacteristicHandleWrite(
-                                    HAPNonnull(session->server),
-                                    &(const HAPFloatCharacteristicWriteRequest) {
-                                            .transportType = kHAPTransportType_IP,
-                                            .session = &session->securitySession.session,
-                                            .characteristic = (const HAPFloatCharacteristic*) baseCharacteristic,
-                                            .service = service,
-                                            .accessory = accessory,
-                                            .remote = writeContext->remote,
-                                            .authorizationData = { .bytes = authorizationDataBytes,
-                                                                   .numBytes = numAuthorizationDataBytes } },
-                                    writeContext->value.floatValue,
-                                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-                            writeContext->status = ConvertCharacteristicWriteErrorToStatusCode(err);
-                        } else {
-                            writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                        }
-                    } break;
-                    case kHAPCharacteristicFormat_String: {
-                        if ((writeContext->type == kHAPIPWriteValueType_String) &&
-                            (writeContext->value.stringValue.numBytes <= 256)) {
-                            HAPAssert(writeContext->value.stringValue.bytes);
-                            HAPAssert(dataBuffer->data);
-                            HAPAssert(dataBuffer->position <= dataBuffer->limit);
-                            HAPAssert(dataBuffer->limit <= dataBuffer->capacity);
-                            if (writeContext->value.stringValue.numBytes >= dataBuffer->limit - dataBuffer->position) {
-                                writeContext->status = kHAPIPAccessoryServerStatusCode_OutOfResources;
-                            } else {
-                                HAPRawBufferCopyBytes(
-                                        &dataBuffer->data[dataBuffer->position],
-                                        HAPNonnull(writeContext->value.stringValue.bytes),
-                                        writeContext->value.stringValue.numBytes);
-                                dataBuffer->data[dataBuffer->position + writeContext->value.stringValue.numBytes] =
-                                        '\0';
-                                err = HAPStringCharacteristicHandleWrite(
-                                        HAPNonnull(session->server),
-                                        &(const HAPStringCharacteristicWriteRequest) {
-                                                .transportType = kHAPTransportType_IP,
-                                                .session = &session->securitySession.session,
-                                                .characteristic = (const HAPStringCharacteristic*) baseCharacteristic,
-                                                .service = service,
-                                                .accessory = accessory,
-                                                .remote = writeContext->remote,
-                                                .authorizationData = { .bytes = authorizationDataBytes,
-                                                                       .numBytes = numAuthorizationDataBytes } },
-                                        &dataBuffer->data[dataBuffer->position],
-                                        HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-                                writeContext->status = ConvertCharacteristicWriteErrorToStatusCode(err);
-                            }
-                        } else {
-                            writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                        }
-                    } break;
-                    case kHAPCharacteristicFormat_TLV8: {
-                        if (writeContext->type == kHAPIPWriteValueType_String) {
-                            HAPAssert(writeContext->value.stringValue.bytes);
-                            int r = util_base64_decode(
-                                    writeContext->value.stringValue.bytes,
-                                    writeContext->value.stringValue.numBytes,
-                                    writeContext->value.stringValue.bytes,
-                                    writeContext->value.stringValue.numBytes,
-                                    &writeContext->value.stringValue.numBytes);
-                            if (r == 0) {
-                                HAPTLVReaderRef tlvReader;
-                                HAPTLVReaderCreate(
-                                        &tlvReader,
-                                        writeContext->value.stringValue.bytes,
-                                        writeContext->value.stringValue.numBytes);
-                                err = HAPTLV8CharacteristicHandleWrite(
-                                        HAPNonnull(session->server),
-                                        &(const HAPTLV8CharacteristicWriteRequest) {
-                                                .transportType = kHAPTransportType_IP,
-                                                .session = &session->securitySession.session,
-                                                .characteristic = (const HAPTLV8Characteristic*) baseCharacteristic,
-                                                .service = service,
-                                                .accessory = accessory,
-                                                .remote = writeContext->remote,
-                                                .authorizationData = { .bytes = authorizationDataBytes,
-                                                                       .numBytes = numAuthorizationDataBytes } },
-                                        &tlvReader,
-                                        HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-                                writeContext->status = ConvertCharacteristicWriteErrorToStatusCode(err);
-                            } else {
-                                writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
-                            }
-                        }
-                    } break;
-                }
-                if (writeContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                    if (baseCharacteristic->properties.ip.supportsWriteResponse) {
-                        HAPIPByteBuffer dataBufferSnapshot;
-                        HAPRawBufferCopyBytes(&dataBufferSnapshot, dataBuffer, sizeof dataBufferSnapshot);
-                        HAPIPReadContext readContext;
-                        HAPRawBufferZero(&readContext, sizeof readContext);
-                        readContext.aid = writeContext->aid;
-                        readContext.iid = writeContext->iid;
-                        handle_characteristic_read_request(
-                                session,
-                                characteristic,
-                                service,
-                                accessory,
-                                (HAPIPReadContextRef*) &readContext,
-                                dataBuffer);
-                        writeContext->status = readContext.status;
-                        if (writeContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                            if (writeContext->response) {
-                                switch (baseCharacteristic->format) {
-                                    case kHAPCharacteristicFormat_Bool:
-                                    case kHAPCharacteristicFormat_UInt8:
-                                    case kHAPCharacteristicFormat_UInt16:
-                                    case kHAPCharacteristicFormat_UInt32:
-                                    case kHAPCharacteristicFormat_UInt64: {
-                                        writeContext->value.unsignedIntValue = readContext.value.unsignedIntValue;
-                                    } break;
-                                    case kHAPCharacteristicFormat_Int: {
-                                        writeContext->value.intValue = readContext.value.intValue;
-                                    } break;
-                                    case kHAPCharacteristicFormat_Float: {
-                                        writeContext->value.floatValue = readContext.value.floatValue;
-                                    } break;
-                                    case kHAPCharacteristicFormat_Data:
-                                    case kHAPCharacteristicFormat_String:
-                                    case kHAPCharacteristicFormat_TLV8: {
-                                        writeContext->value.stringValue.bytes = readContext.value.stringValue.bytes;
-                                        writeContext->value.stringValue.numBytes =
-                                                readContext.value.stringValue.numBytes;
-                                    } break;
-                                }
-                            } else {
-                                // Ignore value of read operation and revert possible changes to data buffer.
-                                HAPRawBufferCopyBytes(dataBuffer, &dataBufferSnapshot, sizeof *dataBuffer);
-                            }
-                        }
-                    } else if (writeContext->response) {
-                        writeContext->status = kHAPIPAccessoryServerStatusCode_ReadFromWriteOnlyCharacteristic;
-                    }
-                }
-            }
-        } else {
-            writeContext->status = kHAPIPAccessoryServerStatusCode_WriteToReadOnlyCharacteristic;
-        }
-    }
+    session->state = kHAPIPSessionState_Writing;
 }
 
 /**
@@ -1277,16 +786,14 @@ static void handle_characteristic_write_request(
  * @param      numContexts          Length of @p contexts.
  * @param      dataBuffer           Buffer for values of type data, string or TLV8.
  * @param      timedWrite           Whether the request was a valid Execute Write Request or a regular Write Request.
- *
- * @return 0                        If all writes could be handled successfully.
- * @return -1                       Otherwise (Multi-Status).
+ * @returns the number of in progress write requests.
  */
-HAP_RESULT_USE_CHECK
-static int handle_characteristic_write_requests(
+static size_t handle_characteristic_write_requests(
         HAPIPSessionDescriptor* session,
-        HAPIPWriteContextRef* contexts,
+        HAPIPCharacteristicContextRef* contexts,
         size_t numContexts,
         HAPIPByteBuffer* dataBuffer,
+        bool* mutliStatus,
         bool timedWrite) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
@@ -1296,15 +803,17 @@ static int handle_characteristic_write_requests(
     HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
     HAPPrecondition(contexts);
     HAPPrecondition(dataBuffer);
+    HAPPrecondition(mutliStatus);
+    HAPPrecondition(*mutliStatus == false);
 
-    int r = 0;
+    size_t numInProgress = 0;
 
     for (size_t i = 0; i < numContexts; i++) {
-        HAPIPWriteContext* writeContext = (HAPIPWriteContext*) &contexts[i];
+        HAPIPCharacteristicContext* context = (HAPIPCharacteristicContext*) &contexts[i];
         const HAPCharacteristic* characteristic;
         const HAPService* service;
         const HAPAccessory* accessory;
-        get_db_ctx(session->server, writeContext->aid, writeContext->iid, &characteristic, &service, &accessory);
+        get_db_ctx(session->server, context->aid, context->iid, &characteristic, &service, &accessory);
         if (characteristic) {
             HAPAssert(service);
             HAPAssert(accessory);
@@ -1322,7 +831,7 @@ static int handle_characteristic_write_requests(
             server->ip.characteristicWriteRequestContext.service = service;
             server->ip.characteristicWriteRequestContext.accessory = accessory;
             const HAPBaseCharacteristic* baseCharacteristic = characteristic;
-            if ((writeContext->type != kHAPIPWriteValueType_None) &&
+            if ((context->write.type != kHAPIPWriteValueType_None) &&
                 baseCharacteristic->properties.requiresTimedWrite && !timedWrite) {
                 // If the accessory receives a standard write request on a characteristic which requires timed write,
                 // the accessory must respond with HAP status error code -70410 (HAPIPStatusErrorCodeInvalidWrite).
@@ -1334,43 +843,48 @@ static int handle_characteristic_write_requests(
                         service,
                         accessory,
                         "Rejected write: Only timed writes are supported.");
-                writeContext->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
+                context->status = kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
             } else {
-                handle_characteristic_write_request(
-                        session, characteristic, service, accessory, &contexts[i], dataBuffer);
+                HAPIPCharacteristicHandleWriteRequest(
+                        (HAPIPSessionDescriptorRef*) session,
+                        characteristic,
+                        service,
+                        accessory,
+                        &contexts[i],
+                        dataBuffer);
             }
             server->ip.characteristicWriteRequestContext.ipSession = NULL;
             server->ip.characteristicWriteRequestContext.characteristic = NULL;
             server->ip.characteristicWriteRequestContext.service = NULL;
             server->ip.characteristicWriteRequestContext.accessory = NULL;
         } else {
-            writeContext->status = kHAPIPAccessoryServerStatusCode_ResourceDoesNotExist;
+            context->status = kHAPIPAccessoryServerStatusCode_ResourceDoesNotExist;
         }
-        if ((r == 0) && (writeContext->status != kHAPIPAccessoryServerStatusCode_Success)) {
-            r = -1;
-        }
-        if ((r == 0) && writeContext->response) {
-            r = -1;
+        if (context->status == kHAPIPAccessoryServerStatusCode_InPorgress) {
+            numInProgress++;
+        } else if (*mutliStatus == false && (context->status != kHAPIPAccessoryServerStatusCode_Success ||
+            context->write.response)) {
+            *mutliStatus = true;
         }
     }
-
-    return r;
+    return numInProgress;
 }
 
 static void put_characteristics(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPAccessoryServer* server = (HAPAccessoryServer*) session->server;
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
     HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
+    HAPPrecondition(session->inProgress.state == kHAPIPSessionInProgressState_None);
+    HAPPrecondition(session->inProgress.numContexts == 0);
+    HAPPrecondition(session->inProgress.mutliStatus == false);
 
     HAPError err;
-    int r;
-    size_t i, contexts_count;
+    size_t i;
     bool pid_valid;
+    bool mutliStatus = false;
     uint64_t pid;
-    HAPIPByteBuffer data_buffer;
 
     HAPAssert(session->inboundBuffer.data);
     HAPAssert(session->inboundBuffer.position <= session->inboundBuffer.limit);
@@ -1381,9 +895,9 @@ static void put_characteristics(HAPIPSessionDescriptor* session) {
         err = HAPIPAccessoryProtocolGetCharacteristicWriteRequests(
                 &session->inboundBuffer.data[session->httpReaderPosition],
                 session->httpContentLength.value,
-                server->ip.storage->writeContexts,
-                server->ip.storage->numWriteContexts,
-                &contexts_count,
+                session->contexts,
+                session->maxContexts,
+                &session->numContexts,
                 &pid_valid,
                 &pid);
         if (!err) {
@@ -1396,28 +910,32 @@ static void put_characteristics(HAPIPSessionDescriptor* session) {
                 // See HomeKit Accessory Protocol Specification R14
                 // Section 6.7.2.4 Timed Write Procedures
                 HAPLog(&logObject, "Rejecting expired Execute Write Request.");
-                for (i = 0; i < contexts_count; i++) {
-                    ((HAPIPWriteContext*) &server->ip.storage->writeContexts[i])->status =
+                for (i = 0; i < session->numContexts; i++) {
+                    ((HAPIPCharacteristicContext*) &session->contexts[i])->status =
                             kHAPIPAccessoryServerStatusCode_InvalidValueInWrite;
                 }
-                HAPAssert(i == contexts_count);
-                write_characteristic_write_response(session, server->ip.storage->writeContexts, contexts_count);
-            } else if (contexts_count == 0) {
+                HAPAssert(i == session->numContexts);
+                write_characteristic_write_response(session, session->contexts, session->numContexts);
+            } else if (session->numContexts == 0) {
                 write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_NoContent);
             } else {
-                data_buffer.data = server->ip.storage->scratchBuffer.bytes;
-                data_buffer.capacity = server->ip.storage->scratchBuffer.numBytes;
-                data_buffer.limit = server->ip.storage->scratchBuffer.numBytes;
-                data_buffer.position = 0;
-                HAPAssert(data_buffer.data);
-                HAPAssert(data_buffer.position <= data_buffer.limit);
-                HAPAssert(data_buffer.limit <= data_buffer.capacity);
-                r = handle_characteristic_write_requests(
-                        session, server->ip.storage->writeContexts, contexts_count, &data_buffer, pid_valid);
-                if (r == 0) {
-                    write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_NoContent);
+                HAPIPByteBufferClear(&session->scratchBuffer);
+                session->inProgress.numContexts = handle_characteristic_write_requests(
+                        session,
+                        session->contexts,
+                        session->numContexts,
+                        &session->scratchBuffer,
+                        &mutliStatus,
+                        pid_valid);
+                if (session->inProgress.numContexts) {
+                    session->inProgress.state = kHAPIPSessionInProgressState_PutCharacteristics;
+                    session->inProgress.mutliStatus = mutliStatus;
+                    return;
+                }
+                if (mutliStatus) {
+                    write_characteristic_write_response(session, session->contexts, session->numContexts);
                 } else {
-                    write_characteristic_write_response(session, server->ip.storage->writeContexts, contexts_count);
+                    write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_NoContent);
                 }
             }
             // Reset timed write transaction.
@@ -1435,332 +953,49 @@ static void put_characteristics(HAPIPSessionDescriptor* session) {
     }
 }
 
-/**
- * Converts a characteristic read request error to the corresponding HAP status code.
- *
- * @param      error                Read request error.
- *
- * @return HAP read request status code.
- *
- * @see HomeKit Accessory Protocol Specification R14
- *      Table 6-11 HAP Status Codes
- */
-static int32_t ConvertCharacteristicReadErrorToStatusCode(HAPError error) {
-    switch (error) {
-        case kHAPError_None: {
-            return kHAPIPAccessoryServerStatusCode_Success;
-        }
-        case kHAPError_Unknown: {
-            return kHAPIPAccessoryServerStatusCode_UnableToPerformOperation;
-        }
-        case kHAPError_InvalidState: {
-            return kHAPIPAccessoryServerStatusCode_UnableToPerformOperation;
-        }
-        case kHAPError_InvalidData: {
-            HAPFatalError();
-        }
-        case kHAPError_OutOfResources: {
-            return kHAPIPAccessoryServerStatusCode_OutOfResources;
-        }
-        case kHAPError_NotAuthorized: {
-            return kHAPIPAccessoryServerStatusCode_InsufficientAuthorization;
-        }
-        case kHAPError_Busy: {
-            return kHAPIPAccessoryServerStatusCode_ResourceIsBusy;
-        }
-        case kHAPError_InProgress: {
-            HAPFatalError();
-        }
-    }
-    HAPFatalError();
-}
-
-static void handle_characteristic_read_request(
-        HAPIPSessionDescriptor* session,
-        const HAPCharacteristic* chr_,
-        const HAPService* svc,
-        const HAPAccessory* acc,
-        HAPIPReadContextRef* ctx,
-        HAPIPByteBuffer* data_buffer) {
-    HAPPrecondition(session);
-    HAPPrecondition(session->server);
-    HAPPrecondition(session->securitySession.isOpen);
-    HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
-    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
-
-    HAPError err;
-
-    size_t n, sval_length;
-    bool bool_val;
-    int32_t int_val;
-    uint8_t uint8_val;
-    uint16_t uint16_val;
-    uint32_t uint32_val;
-    uint64_t uint64_val;
-    float float_val;
-    HAPTLVWriterRef tlv8_writer;
-    HAPAssert(chr_);
-    const HAPBaseCharacteristic* chr = chr_;
-    HAPAssert(svc);
-    HAPAssert(acc);
-    HAPAssert(ctx);
-    HAPAssert(data_buffer);
-    HAPAssert(data_buffer->data);
-    HAPAssert(data_buffer->position <= data_buffer->limit);
-    HAPAssert(data_buffer->limit <= data_buffer->capacity);
-    HAPIPReadContext* readContext = (HAPIPReadContext*) ctx;
-    readContext->status = kHAPIPAccessoryServerStatusCode_Success;
-    switch (chr->format) {
-        case kHAPCharacteristicFormat_Data: {
-            err = HAPDataCharacteristicHandleRead(
-                    HAPNonnull(session->server),
-                    &(const HAPDataCharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                .session = &session->securitySession.session,
-                                                                .characteristic = (const HAPDataCharacteristic*) chr,
-                                                                .service = svc,
-                                                                .accessory = acc },
-                    &data_buffer->data[data_buffer->position],
-                    data_buffer->limit - data_buffer->position,
-                    &sval_length,
-                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            readContext->status = ConvertCharacteristicReadErrorToStatusCode(err);
-            if (readContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                if (sval_length <= data_buffer->limit - data_buffer->position) {
-                    util_base64_encode(
-                            &data_buffer->data[data_buffer->position],
-                            sval_length,
-                            &data_buffer->data[data_buffer->position],
-                            data_buffer->limit - data_buffer->position,
-                            &sval_length);
-                    if (sval_length < data_buffer->limit - data_buffer->position) {
-                        data_buffer->data[data_buffer->position + sval_length] = 0;
-                        readContext->value.stringValue.bytes = &data_buffer->data[data_buffer->position];
-                        readContext->value.stringValue.numBytes = sval_length;
-                        data_buffer->position += sval_length + 1;
-                        HAPAssert(data_buffer->position <= data_buffer->limit);
-                        HAPAssert(data_buffer->limit <= data_buffer->capacity);
-                    } else {
-                        readContext->status = kHAPIPAccessoryServerStatusCode_OutOfResources;
-                    }
-                } else {
-                    readContext->status = kHAPIPAccessoryServerStatusCode_OutOfResources;
-                }
-            }
-        } break;
-        case kHAPCharacteristicFormat_Bool: {
-            err = HAPBoolCharacteristicHandleRead(
-                    HAPNonnull(session->server),
-                    &(const HAPBoolCharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                .session = &session->securitySession.session,
-                                                                .characteristic = (const HAPBoolCharacteristic*) chr,
-                                                                .service = svc,
-                                                                .accessory = acc },
-                    &bool_val,
-                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            readContext->status = ConvertCharacteristicReadErrorToStatusCode(err);
-            if (readContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                readContext->value.unsignedIntValue = bool_val ? 1 : 0;
-            }
-        } break;
-        case kHAPCharacteristicFormat_UInt8: {
-            err = HAPUInt8CharacteristicHandleRead(
-                    HAPNonnull(session->server),
-                    &(const HAPUInt8CharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                 .session = &session->securitySession.session,
-                                                                 .characteristic = (const HAPUInt8Characteristic*) chr,
-                                                                 .service = svc,
-                                                                 .accessory = acc },
-                    &uint8_val,
-                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            readContext->status = ConvertCharacteristicReadErrorToStatusCode(err);
-            if (readContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                readContext->value.unsignedIntValue = uint8_val;
-            }
-        } break;
-        case kHAPCharacteristicFormat_UInt16: {
-            err = HAPUInt16CharacteristicHandleRead(
-                    HAPNonnull(session->server),
-                    &(const HAPUInt16CharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                  .session = &session->securitySession.session,
-                                                                  .characteristic =
-                                                                          (const HAPUInt16Characteristic*) chr,
-                                                                  .service = svc,
-                                                                  .accessory = acc },
-                    &uint16_val,
-                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            readContext->status = ConvertCharacteristicReadErrorToStatusCode(err);
-            if (readContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                readContext->value.unsignedIntValue = uint16_val;
-            }
-        } break;
-        case kHAPCharacteristicFormat_UInt32: {
-            err = HAPUInt32CharacteristicHandleRead(
-                    HAPNonnull(session->server),
-                    &(const HAPUInt32CharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                  .session = &session->securitySession.session,
-                                                                  .characteristic =
-                                                                          (const HAPUInt32Characteristic*) chr,
-                                                                  .service = svc,
-                                                                  .accessory = acc },
-                    &uint32_val,
-                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            readContext->status = ConvertCharacteristicReadErrorToStatusCode(err);
-            if (readContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                readContext->value.unsignedIntValue = uint32_val;
-            }
-        } break;
-        case kHAPCharacteristicFormat_UInt64: {
-            err = HAPUInt64CharacteristicHandleRead(
-                    HAPNonnull(session->server),
-                    &(const HAPUInt64CharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                  .session = &session->securitySession.session,
-                                                                  .characteristic =
-                                                                          (const HAPUInt64Characteristic*) chr,
-                                                                  .service = svc,
-                                                                  .accessory = acc },
-                    &uint64_val,
-                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            readContext->status = ConvertCharacteristicReadErrorToStatusCode(err);
-            if (readContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                readContext->value.unsignedIntValue = uint64_val;
-            }
-        } break;
-        case kHAPCharacteristicFormat_Int: {
-            err = HAPIntCharacteristicHandleRead(
-                    HAPNonnull(session->server),
-                    &(const HAPIntCharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                               .session = &session->securitySession.session,
-                                                               .characteristic = (const HAPIntCharacteristic*) chr,
-                                                               .service = svc,
-                                                               .accessory = acc },
-                    &int_val,
-                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            readContext->status = ConvertCharacteristicReadErrorToStatusCode(err);
-            if (readContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                readContext->value.intValue = int_val;
-            }
-        } break;
-        case kHAPCharacteristicFormat_Float: {
-            err = HAPFloatCharacteristicHandleRead(
-                    HAPNonnull(session->server),
-                    &(const HAPFloatCharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                 .session = &session->securitySession.session,
-                                                                 .characteristic = (const HAPFloatCharacteristic*) chr,
-                                                                 .service = svc,
-                                                                 .accessory = acc },
-                    &float_val,
-                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            readContext->status = ConvertCharacteristicReadErrorToStatusCode(err);
-            if (readContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                readContext->value.floatValue = float_val;
-            }
-        } break;
-        case kHAPCharacteristicFormat_String: {
-            err = HAPStringCharacteristicHandleRead(
-                    HAPNonnull(session->server),
-                    &(const HAPStringCharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                  .session = &session->securitySession.session,
-                                                                  .characteristic =
-                                                                          (const HAPStringCharacteristic*) chr,
-                                                                  .service = svc,
-                                                                  .accessory = acc },
-                    &data_buffer->data[data_buffer->position],
-                    data_buffer->limit - data_buffer->position,
-                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            readContext->status = ConvertCharacteristicReadErrorToStatusCode(err);
-            if (readContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                sval_length = HAPStringGetNumBytes(&data_buffer->data[data_buffer->position]);
-                if (sval_length < data_buffer->limit - data_buffer->position) {
-                    data_buffer->data[data_buffer->position + sval_length] = 0;
-                    readContext->value.stringValue.bytes = &data_buffer->data[data_buffer->position];
-                    readContext->value.stringValue.numBytes = sval_length;
-                    data_buffer->position += sval_length + 1;
-                    HAPAssert(data_buffer->position <= data_buffer->limit);
-                    HAPAssert(data_buffer->limit <= data_buffer->capacity);
-                } else {
-                    readContext->status = kHAPIPAccessoryServerStatusCode_OutOfResources;
-                }
-            }
-        } break;
-        case kHAPCharacteristicFormat_TLV8: {
-            n = data_buffer->limit - data_buffer->position;
-            HAPTLVWriterCreate(&tlv8_writer, &data_buffer->data[data_buffer->position], n);
-            err = HAPTLV8CharacteristicHandleRead(
-                    HAPNonnull(session->server),
-                    &(const HAPTLV8CharacteristicReadRequest) { .transportType = kHAPTransportType_IP,
-                                                                .session = &session->securitySession.session,
-                                                                .characteristic = (const HAPTLV8Characteristic*) chr,
-                                                                .service = svc,
-                                                                .accessory = acc },
-                    &tlv8_writer,
-                    HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            readContext->status = ConvertCharacteristicReadErrorToStatusCode(err);
-            if (readContext->status == kHAPIPAccessoryServerStatusCode_Success) {
-                if (((HAPTLVWriter*) &tlv8_writer)->numBytes <= data_buffer->limit - data_buffer->position) {
-                    util_base64_encode(
-                            &data_buffer->data[data_buffer->position],
-                            ((HAPTLVWriter*) &tlv8_writer)->numBytes,
-                            &data_buffer->data[data_buffer->position],
-                            data_buffer->limit - data_buffer->position,
-                            &sval_length);
-                    if (sval_length < data_buffer->limit - data_buffer->position) {
-                        data_buffer->data[data_buffer->position + sval_length] = 0;
-                        readContext->value.stringValue.bytes = &data_buffer->data[data_buffer->position];
-                        readContext->value.stringValue.numBytes = sval_length;
-                        data_buffer->position += sval_length + 1;
-                        HAPAssert(data_buffer->position <= data_buffer->limit);
-                        HAPAssert(data_buffer->limit <= data_buffer->capacity);
-                    } else {
-                        readContext->status = kHAPIPAccessoryServerStatusCode_OutOfResources;
-                    }
-                } else {
-                    readContext->status = kHAPIPAccessoryServerStatusCode_OutOfResources;
-                }
-            }
-        } break;
-    }
-}
-
 HAP_RESULT_USE_CHECK
-static int handle_characteristic_read_requests(
+static size_t handle_characteristic_read_requests(
         HAPIPSessionDescriptor* session,
         HAPIPSessionContext session_context,
-        HAPIPReadContextRef* contexts,
+        HAPIPCharacteristicContextRef* contexts,
         size_t contexts_count,
+        bool* mutliStatus,
         HAPIPByteBuffer* data_buffer) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
     HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
+    HAPPrecondition(contexts);
+    HAPPrecondition(mutliStatus);
+    HAPPrecondition(*mutliStatus == false);
 
-    int r;
+    size_t numInProgress = 0;
     size_t i, j;
     const HAPCharacteristic* c;
     const HAPService* svc;
     const HAPAccessory* acc;
-    HAPAssert(contexts);
-    r = 0;
-    for (i = 0; i < contexts_count; i++) {
-        HAPIPReadContext* readContext = (HAPIPReadContext*) &contexts[i];
 
-        get_db_ctx(session->server, readContext->aid, readContext->iid, &c, &svc, &acc);
+    for (i = 0; i < contexts_count; i++) {
+        HAPIPCharacteristicContext* context = (HAPIPCharacteristicContext*) &contexts[i];
+
+        get_db_ctx(session->server, context->aid, context->iid, &c, &svc, &acc);
         if (c) {
             const HAPBaseCharacteristic* chr = c;
-            HAPAssert(chr->iid == readContext->iid);
+            HAPAssert(chr->iid == context->iid);
             HAPAssert(session->numEventNotifications <= session->maxEventNotifications);
             j = 0;
             while ((j < session->numEventNotifications) &&
-                   ((((HAPIPEventNotification*) &session->eventNotifications[j])->aid != readContext->aid) ||
-                    (((HAPIPEventNotification*) &session->eventNotifications[j])->iid != readContext->iid))) {
+                   ((((HAPIPEventNotification*) &session->eventNotifications[j])->aid != context->aid) ||
+                    (((HAPIPEventNotification*) &session->eventNotifications[j])->iid != context->iid))) {
                 j++;
             }
             HAPAssert(
                     (j == session->numEventNotifications) ||
                     ((j < session->numEventNotifications) &&
-                     (((HAPIPEventNotification*) &session->eventNotifications[j])->aid == readContext->aid) &&
-                     (((HAPIPEventNotification*) &session->eventNotifications[j])->iid == readContext->iid)));
-            readContext->ev = j < session->numEventNotifications;
+                     (((HAPIPEventNotification*) &session->eventNotifications[j])->aid == context->aid) &&
+                     (((HAPIPEventNotification*) &session->eventNotifications[j])->iid == context->iid)));
+            context->read.ev = j < session->numEventNotifications;
             if (!HAPCharacteristicReadRequiresAdminPermissions(chr) ||
                 HAPSessionControllerIsAdmin(&session->securitySession.session)) {
                 if (chr->properties.readable) {
@@ -1769,46 +1004,114 @@ static int handle_characteristic_read_requests(
                         // A read of this characteristic must always return a null value for IP accessories.
                         // See HomeKit Accessory Protocol Specification R14
                         // Section 9.75 Programmable Switch Event
-                        readContext->status = kHAPIPAccessoryServerStatusCode_Success;
-                        readContext->value.unsignedIntValue = 0;
+                        context->status = kHAPIPAccessoryServerStatusCode_Success;
+                        context->value.unsignedIntValue = 0;
                     } else if (
                             (session_context == kHAPIPSessionContext_GetAccessories) &&
                             chr->properties.ip.controlPoint) {
-                        readContext->status = kHAPIPAccessoryServerStatusCode_UnableToPerformOperation;
+                        context->status = kHAPIPAccessoryServerStatusCode_UnableToPerformOperation;
                     } else {
-                        handle_characteristic_read_request(session, chr, svc, acc, &contexts[i], data_buffer);
+                        HAPIPCharacteristicHandleReadRequest(
+                                (HAPIPSessionDescriptorRef*) session,
+                                chr,
+                                svc,
+                                acc,
+                                (HAPIPCharacteristicContextRef*) context,
+                                data_buffer);
                     }
                 } else {
-                    readContext->status = kHAPIPAccessoryServerStatusCode_ReadFromWriteOnlyCharacteristic;
+                    context->status = kHAPIPAccessoryServerStatusCode_ReadFromWriteOnlyCharacteristic;
                 }
             } else {
-                readContext->status = kHAPIPAccessoryServerStatusCode_InsufficientPrivileges;
+                context->status = kHAPIPAccessoryServerStatusCode_InsufficientPrivileges;
             }
         } else {
-            readContext->status = kHAPIPAccessoryServerStatusCode_ResourceDoesNotExist;
+            context->status = kHAPIPAccessoryServerStatusCode_ResourceDoesNotExist;
         }
-        if ((r == 0) && (readContext->status != kHAPIPAccessoryServerStatusCode_Success)) {
-            r = -1;
+        if (context->status == kHAPIPAccessoryServerStatusCode_InPorgress) {
+            numInProgress++;
+        } else if (context->status != kHAPIPAccessoryServerStatusCode_Success) {
+            *mutliStatus = true;
         }
     }
     HAPAssert(i == contexts_count);
-    return r;
+    return numInProgress;
 }
 
-static void get_characteristics(HAPIPSessionDescriptor* session) {
+static void write_characteristic_read_response(
+        HAPIPSessionDescriptor* session,
+        HAPIPCharacteristicContextRef* contexts,
+        size_t contexts_count,
+        HAPIPReadRequestParameters* parameters,
+        bool mutliStatus) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
-    HAPAccessoryServer* server = (HAPAccessoryServer*) session->server;
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
     HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
 
     HAPError err;
+    size_t content_length, mark;
 
-    int r;
-    size_t contexts_count, content_length, mark;
+    content_length = HAPIPAccessoryProtocolGetNumCharacteristicReadResponseBytes(
+            session->server,
+            contexts,
+            contexts_count,
+            parameters);
+    HAPAssert(session->outboundBuffer.data);
+    HAPAssert(session->outboundBuffer.position <= session->outboundBuffer.limit);
+    HAPAssert(session->outboundBuffer.limit <= session->outboundBuffer.capacity);
+    mark = session->outboundBuffer.position;
+    if (!mutliStatus) {
+        err = HAPIPByteBufferAppendStringWithFormat(&session->outboundBuffer, "HTTP/1.1 200 OK\r\n");
+    } else {
+        err = HAPIPByteBufferAppendStringWithFormat(
+                &session->outboundBuffer, "HTTP/1.1 207 Multi-Status\r\n");
+    }
+    HAPAssert(!err);
+    HAP_DIAGNOSTIC_IGNORED_ICCARM(Pa084)
+    if (content_length <= UINT32_MAX) {
+        err = HAPIPByteBufferAppendStringWithFormat(
+                &session->outboundBuffer,
+                "Content-Type: application/hap+json\r\n"
+                "Content-Length: %lu\r\n\r\n",
+                (unsigned long) content_length);
+        HAPAssert(!err);
+        if (content_length <= session->outboundBuffer.limit - session->outboundBuffer.position) {
+            mark = session->outboundBuffer.position;
+            err = HAPIPAccessoryProtocolGetCharacteristicReadResponseBytes(
+                    HAPNonnull(session->server),
+                    contexts,
+                    contexts_count,
+                    parameters,
+                    &session->outboundBuffer);
+            HAPAssert(!err && (session->outboundBuffer.position - mark == content_length));
+        } else {
+            HAPLog(&logObject, "Out of resources (outbound buffer too small).");
+            session->outboundBuffer.position = mark;
+            write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_OutOfResources);
+        }
+    } else {
+        HAPLog(&logObject, "Content length exceeding UINT32_MAX.");
+        session->outboundBuffer.position = mark;
+        write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_OutOfResources);
+    }
+    HAP_DIAGNOSTIC_RESTORE_ICCARM(Pa084)
+}
+
+static void get_characteristics(HAPIPSessionDescriptor* session) {
+    HAPPrecondition(session);
+    HAPPrecondition(session->server);
+    HAPPrecondition(session->securitySession.isOpen);
+    HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
+    HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
+    HAPPrecondition(session->inProgress.state == kHAPIPSessionInProgressState_None);
+    HAPPrecondition(session->inProgress.numContexts == 0);
+    HAPPrecondition(session->inProgress.mutliStatus == false);
+
+    HAPError err;
+    bool mutliStatus = false;
     HAPIPReadRequestParameters parameters;
-    HAPIPByteBuffer data_buffer;
 
     HAPAssert(
             (session->httpURI.numBytes >= 16) &&
@@ -1817,68 +1120,34 @@ static void get_characteristics(HAPIPSessionDescriptor* session) {
         err = HAPIPAccessoryProtocolGetCharacteristicReadRequests(
                 &session->httpURI.bytes[17],
                 session->httpURI.numBytes - 17,
-                server->ip.storage->readContexts,
-                server->ip.storage->numReadContexts,
-                &contexts_count,
+                session->contexts,
+                session->maxContexts,
+                &session->numContexts,
                 &parameters);
         if (!err) {
-            if (contexts_count == 0) {
+            if (session->numContexts == 0) {
                 write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_NoContent);
             } else {
-                data_buffer.data = server->ip.storage->scratchBuffer.bytes;
-                data_buffer.capacity = server->ip.storage->scratchBuffer.numBytes;
-                data_buffer.limit = server->ip.storage->scratchBuffer.numBytes;
-                data_buffer.position = 0;
-                HAPAssert(data_buffer.data);
-                HAPAssert(data_buffer.position <= data_buffer.limit);
-                HAPAssert(data_buffer.limit <= data_buffer.capacity);
-                r = handle_characteristic_read_requests(
+                HAPIPByteBufferClear(&session->scratchBuffer);
+                session->inProgress.numContexts = handle_characteristic_read_requests(
                         session,
                         kHAPIPSessionContext_GetCharacteristics,
-                        server->ip.storage->readContexts,
-                        contexts_count,
-                        &data_buffer);
-                content_length = HAPIPAccessoryProtocolGetNumCharacteristicReadResponseBytes(
-                        HAPNonnull(session->server), server->ip.storage->readContexts, contexts_count, &parameters);
-                HAPAssert(session->outboundBuffer.data);
-                HAPAssert(session->outboundBuffer.position <= session->outboundBuffer.limit);
-                HAPAssert(session->outboundBuffer.limit <= session->outboundBuffer.capacity);
-                mark = session->outboundBuffer.position;
-                if (r == 0) {
-                    err = HAPIPByteBufferAppendStringWithFormat(&session->outboundBuffer, "HTTP/1.1 200 OK\r\n");
-                } else {
-                    err = HAPIPByteBufferAppendStringWithFormat(
-                            &session->outboundBuffer, "HTTP/1.1 207 Multi-Status\r\n");
+                        session->contexts,
+                        session->numContexts,
+                        &mutliStatus,
+                        &session->scratchBuffer);
+                if (session->inProgress.numContexts) {
+                    session->inProgress.state = kHAPIPSessionInProgressState_GetCharacteristics;
+                    session->inProgress.mutliStatus = mutliStatus;
+                    session->inProgress.parameters = parameters;
+                    return;
                 }
-                HAPAssert(!err);
-                HAP_DIAGNOSTIC_IGNORED_ICCARM(Pa084)
-                if (content_length <= UINT32_MAX) {
-                    err = HAPIPByteBufferAppendStringWithFormat(
-                            &session->outboundBuffer,
-                            "Content-Type: application/hap+json\r\n"
-                            "Content-Length: %lu\r\n\r\n",
-                            (unsigned long) content_length);
-                    HAPAssert(!err);
-                    if (content_length <= session->outboundBuffer.limit - session->outboundBuffer.position) {
-                        mark = session->outboundBuffer.position;
-                        err = HAPIPAccessoryProtocolGetCharacteristicReadResponseBytes(
-                                HAPNonnull(session->server),
-                                server->ip.storage->readContexts,
-                                contexts_count,
-                                &parameters,
-                                &session->outboundBuffer);
-                        HAPAssert(!err && (session->outboundBuffer.position - mark == content_length));
-                    } else {
-                        HAPLog(&logObject, "Out of resources (outbound buffer too small).");
-                        session->outboundBuffer.position = mark;
-                        write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_OutOfResources);
-                    }
-                } else {
-                    HAPLog(&logObject, "Content length exceeding UINT32_MAX.");
-                    session->outboundBuffer.position = mark;
-                    write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_OutOfResources);
-                }
-                HAP_DIAGNOSTIC_RESTORE_ICCARM(Pa084)
+                write_characteristic_read_response(
+                        session,
+                        session->contexts,
+                        session->numContexts,
+                        &parameters,
+                        mutliStatus);
             }
         } else if (err == kHAPError_OutOfResources) {
             write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_OutOfResources);
@@ -1901,9 +1170,12 @@ static void handle_accessory_serialization(HAPIPSessionDescriptor* session) {
 
     HAPAssert(session->outboundBuffer.data);
     HAPAssert(session->outboundBuffer.capacity);
-
-    if (session->accessorySerializationIsInProgress) {
+    if (session->inProgress.state == kHAPIPSessionInProgressState_GetAccessories) {
         HAPAssert(session->outboundBuffer.position == session->outboundBuffer.limit);
+        if (session->inProgress.numContexts) {
+            session->state = kHAPIPSessionState_Reading;
+            return;
+        }
         if (session->securitySession.isSecured) {
             HAPAssert(session->outboundBuffer.limit <= session->outboundBufferMark);
             HAPAssert(session->outboundBufferMark <= session->outboundBuffer.capacity);
@@ -1919,6 +1191,8 @@ static void handle_accessory_serialization(HAPIPSessionDescriptor* session) {
             session->outboundBuffer.position = 0;
             session->outboundBuffer.limit = session->outboundBuffer.capacity;
         }
+    } else {
+        HAPAssert(session->inProgress.numContexts == 0);
     }
 
     HAPAssert(session->outboundBuffer.position <= session->outboundBuffer.limit);
@@ -1938,8 +1212,13 @@ static void handle_accessory_serialization(HAPIPSessionDescriptor* session) {
                 &session->outboundBuffer.data[session->outboundBuffer.position],
                 minBytes,
                 maxBytes,
-                &numBytesSerialized);
-        if (err) {
+                &numBytesSerialized,
+                &session->contexts[0],
+                &session->scratchBuffer);
+        if (err == kHAPError_InProgress) {
+            session->inProgress.numContexts = 1;
+            session->numContexts = 1;
+        } else if (err) {
             HAPAssert(err == kHAPError_OutOfResources);
             HAPLogError(&logObject, "Invalid configuration (outbound buffer too small).");
             HAPFatalError();
@@ -1947,7 +1226,8 @@ static void handle_accessory_serialization(HAPIPSessionDescriptor* session) {
         HAPAssert(numBytesSerialized > 0);
         HAPAssert(numBytesSerialized <= maxBytes);
         HAPAssert(
-                (numBytesSerialized >= minBytes) ||
+                numBytesSerialized >= minBytes ||
+                err == kHAPError_InProgress ||
                 HAPIPAccessorySerializationIsComplete(&session->accessorySerializationContext));
 
         // maxProtocolBytes = max(8, size_t represented in HEX + '\r' + '\n' + '\0')
@@ -2041,9 +1321,9 @@ static void handle_accessory_serialization(HAPIPSessionDescriptor* session) {
 
         session->state = kHAPIPSessionState_Writing;
 
-        session->accessorySerializationIsInProgress = true;
+        session->inProgress.state = kHAPIPSessionInProgressState_GetAccessories;
     } else {
-        session->accessorySerializationIsInProgress = false;
+        session->inProgress.state = kHAPIPSessionInProgressState_None;
 
         session->state = kHAPIPSessionState_Reading;
         prepare_reading_request(session);
@@ -2059,7 +1339,7 @@ static void get_accessories(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
     HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
-    HAPPrecondition(!session->accessorySerializationIsInProgress);
+    HAPPrecondition(session->inProgress.state == kHAPIPSessionInProgressState_None);
 
     HAPError err;
 
@@ -2102,8 +1382,8 @@ static void handle_pairing_data(
     HAPTLVReaderRef tlv8_reader;
     HAPTLVWriterRef tlv8_writer;
 
-    char* scratchBuffer = server->ip.storage->scratchBuffer.bytes;
-    size_t maxScratchBufferBytes = server->ip.storage->scratchBuffer.numBytes;
+    char* scratchBuffer = session->scratchBuffer.data;
+    size_t maxScratchBufferBytes = session->scratchBuffer.capacity;
 
     HAPAssert(session->inboundBuffer.data);
     HAPAssert(session->inboundBuffer.position <= session->inboundBuffer.limit);
@@ -2305,12 +1585,12 @@ static void handle_secure_message(HAPIPSessionDescriptor* session) {
 
 #define DestroyRequestBodyAndCreateResponseBodyWriter(responseWriter) \
     do { \
-        size_t numBytes = server->ip.storage->scratchBuffer.numBytes; \
+        size_t numBytes = session->scratchBuffer.capacity; \
         if (numBytes > UINT16_MAX) { \
             /* Maximum for HAP-BLE PDU. */ \
             numBytes = UINT16_MAX; \
         } \
-        HAPTLVWriterCreate(responseWriter, server->ip.storage->scratchBuffer.bytes, numBytes); \
+        HAPTLVWriterCreate(responseWriter, session->scratchBuffer.data, numBytes); \
     } while (0)
 
     // Handle request.
@@ -2526,7 +1806,7 @@ static void identify_primary_accessory(HAPIPSessionDescriptor* session) {
                             .authorizationData = { .bytes = NULL, .numBytes = 0 } },
                     true,
                     HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            if (err) {
+            if (err && err != kHAPError_InProgress) {
                 HAPAssert(
                         err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                         err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
@@ -2840,7 +2120,7 @@ static void handle_http(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session->server);
     HAPPrecondition(session->securitySession.isOpen);
 
-    size_t content_length, encrypted_length;
+    size_t content_length;
     HAPAssert(session->inboundBuffer.data);
     HAPAssert(session->inboundBuffer.position <= session->inboundBuffer.limit);
     HAPAssert(session->inboundBuffer.limit <= session->inboundBuffer.capacity);
@@ -2862,42 +2142,19 @@ static void handle_http(HAPIPSessionDescriptor* session) {
                 (const void*) session);
         handle_http_request(session);
         HAPIPByteBufferShiftLeft(&session->inboundBuffer, session->httpReaderPosition + content_length);
-        if (session->accessorySerializationIsInProgress) {
+        switch (session->inProgress.state) {
+        case kHAPIPSessionInProgressState_None:
+            output(session);
+            break;
+        case kHAPIPSessionInProgressState_GetAccessories:
             // Session is already prepared for writing
             HAPAssert(session->outboundBuffer.data);
             HAPAssert(session->outboundBuffer.position <= session->outboundBuffer.limit);
             HAPAssert(session->outboundBuffer.limit <= session->outboundBuffer.capacity);
             HAPAssert(session->state == kHAPIPSessionState_Writing);
-        } else {
-            HAPAssert(session->outboundBuffer.data);
-            HAPAssert(session->outboundBuffer.position <= session->outboundBuffer.limit);
-            HAPAssert(session->outboundBuffer.limit <= session->outboundBuffer.capacity);
-            HAPIPByteBufferFlip(&session->outboundBuffer);
-            HAPLogBufferDebug(
-                    &logObject,
-                    session->outboundBuffer.data,
-                    session->outboundBuffer.limit,
-                    "session:%p:<",
-                    (const void*) session);
-
-            if (
-                session->securitySession.isSecured) {
-                encrypted_length = HAPIPSecurityProtocolGetNumEncryptedBytes(
-                        session->outboundBuffer.limit - session->outboundBuffer.position);
-                if (encrypted_length > session->outboundBuffer.capacity - session->outboundBuffer.position) {
-                    HAPLog(&logObject, "Out of resources (outbound buffer too small).");
-                    session->outboundBuffer.limit = session->outboundBuffer.capacity;
-                    write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_OutOfResources);
-                    HAPIPByteBufferFlip(&session->outboundBuffer);
-                    encrypted_length = HAPIPSecurityProtocolGetNumEncryptedBytes(
-                            session->outboundBuffer.limit - session->outboundBuffer.position);
-                    HAPAssert(encrypted_length <= session->outboundBuffer.capacity - session->outboundBuffer.position);
-                }
-                HAPIPSecurityProtocolEncryptData(
-                        HAPNonnull(session->server), &session->securitySession.session, &session->outboundBuffer);
-                HAPAssert(encrypted_length == session->outboundBuffer.limit - session->outboundBuffer.position);
-            }
-            session->state = kHAPIPSessionState_Writing;
+            break;
+        default:
+            break;
         }
     }
 }
@@ -3217,11 +2474,66 @@ static void handle_input(HAPIPSessionDescriptor* session) {
     }
 }
 
-static void HandleTCPStreamEvent(
-        HAPPlatformTCPStreamManagerRef tcpStreamManager,
-        HAPPlatformTCPStreamRef tcpStream,
-        HAPPlatformTCPStreamEvent event,
-        void* _Nullable context);
+static void finsh_write_event_notifications(
+        HAPIPSessionDescriptor* session,
+        HAPIPCharacteristicContextRef* contexts,
+        size_t numContexts) {
+    size_t content_length = HAPIPAccessoryProtocolGetNumEventNotificationBytes(
+            HAPNonnull(session->server), contexts, numContexts);
+
+    HAPAssert(session->outboundBuffer.data);
+    HAPAssert(session->outboundBuffer.position <= session->outboundBuffer.limit);
+    HAPAssert(session->outboundBuffer.limit <= session->outboundBuffer.capacity);
+    size_t mark = session->outboundBuffer.position;
+    HAPError err = HAPIPByteBufferAppendStringWithFormat(
+            &session->outboundBuffer,
+            "EVENT/1.0 200 OK\r\n"
+            "Content-Type: application/hap+json\r\n"
+            "Content-Length: %zu\r\n\r\n",
+            content_length);
+    if (err) {
+        HAPAssert(err == kHAPError_OutOfResources);
+        HAPLog(&logObject, "Invalid configuration (outbound buffer too small).");
+        HAPFatalError();
+    }
+    if (content_length <= session->outboundBuffer.limit - session->outboundBuffer.position) {
+        mark = session->outboundBuffer.position;
+        err = HAPIPAccessoryProtocolGetEventNotificationBytes(
+                HAPNonnull(session->server),
+                session->contexts,
+                numContexts,
+                &session->outboundBuffer);
+        HAPAssert(!err && (session->outboundBuffer.position - mark == content_length));
+        HAPIPByteBufferFlip(&session->outboundBuffer);
+        HAPLogBufferDebug(
+                &logObject,
+                session->outboundBuffer.data,
+                session->outboundBuffer.limit,
+                "session:%p:<",
+                (const void*) session);
+        if (session->securitySession.isSecured) {
+            size_t encrypted_length = HAPIPSecurityProtocolGetNumEncryptedBytes(
+                    session->outboundBuffer.limit - session->outboundBuffer.position);
+            if (encrypted_length <= session->outboundBuffer.capacity - session->outboundBuffer.position) {
+                HAPIPSecurityProtocolEncryptData(
+                        HAPNonnull(session->server), &session->securitySession.session, &session->outboundBuffer);
+                HAPAssert(encrypted_length == session->outboundBuffer.limit - session->outboundBuffer.position);
+                session->state = kHAPIPSessionState_Writing;
+            } else {
+                HAPLog(&logObject, "Skipping event notifications (outbound buffer too small).");
+                HAPIPByteBufferClear(&session->outboundBuffer);
+            }
+        } else {
+            HAPAssert(kHAPIPAccessoryServer_SessionSecurityDisabled);
+            HAP_DIAGNOSTIC_IGNORED_ICCARM(Pe111)
+            session->state = kHAPIPSessionState_Writing;
+            HAP_DIAGNOSTIC_RESTORE_ICCARM(Pe111)
+        }
+    } else {
+        HAPLog(&logObject, "Skipping event notifications (outbound buffer too small).");
+        session->outboundBuffer.position = mark;
+    }
+}
 
 static void write_event_notifications(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session);
@@ -3230,28 +2542,29 @@ static void write_event_notifications(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
     HAPPrecondition(session->state == kHAPIPSessionState_Reading);
+    HAPPrecondition(session->inProgress.state == kHAPIPSessionInProgressState_None);
+    HAPPrecondition(session->inProgress.numContexts == 0);
     HAPPrecondition(session->inboundBuffer.position == 0);
     HAPPrecondition(session->numEventNotificationFlags > 0);
     HAPPrecondition(session->numEventNotificationFlags <= session->numEventNotifications);
     HAPPrecondition(session->numEventNotifications <= session->maxEventNotifications);
 
-    HAPError err;
-
     if (session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled) {
         HAPTime clock_now_ms = HAPPlatformClockGetCurrent();
         HAPAssert(clock_now_ms >= session->eventNotificationStamp);
-        HAPTime dt_ms = clock_now_ms - session->eventNotificationStamp;
+        bool _notifyNow = (clock_now_ms - session->eventNotificationStamp) >=
+            kHAPIPAccessoryServer_MaxEventNotificationDelay;
+        if (_notifyNow) {
+            session->eventNotificationStamp = clock_now_ms;
+        }
 
-        size_t numReadContexts = 0;
+        session->numContexts = 0;
 
         for (size_t i = 0; i < session->numEventNotifications; i++) {
             HAPIPEventNotification* eventNotification = (HAPIPEventNotification*) &session->eventNotifications[i];
             if (eventNotification->flag) {
-                bool notifyNow;
-                if (dt_ms >= kHAPIPAccessoryServer_MaxEventNotificationDelay) {
-                    notifyNow = true;
-                    session->eventNotificationStamp = clock_now_ms;
-                } else {
+                bool notifyNow = _notifyNow;
+                if (!notifyNow) {
                     // Network-based notifications must be coalesced by the accessory using a delay of no less than
                     // 1 second. The exception to this rule includes notifications for the following characteristics
                     // which must be delivered immediately.
@@ -3283,13 +2596,13 @@ static void write_event_notifications(HAPIPSessionDescriptor* session) {
                     }
                 }
                 if (notifyNow) {
-                    HAPAssert(numReadContexts < server->ip.storage->numReadContexts);
-                    HAPIPReadContext* readContext =
-                            (HAPIPReadContext*) &server->ip.storage->readContexts[numReadContexts];
-                    HAPRawBufferZero(readContext, sizeof *readContext);
-                    readContext->aid = eventNotification->aid;
-                    readContext->iid = eventNotification->iid;
-                    numReadContexts++;
+                    HAPAssert(session->numContexts < session->maxContexts);
+                    HAPIPCharacteristicContext* context =
+                            (HAPIPCharacteristicContext*) &session->contexts[session->numContexts];
+                    HAPRawBufferZero(context, sizeof(*context));
+                    context->aid = eventNotification->aid;
+                    context->iid = eventNotification->iid;
+                    session->numContexts++;
                     eventNotification->flag = false;
                     HAPAssert(session->numEventNotificationFlags > 0);
                     session->numEventNotificationFlags--;
@@ -3297,86 +2610,29 @@ static void write_event_notifications(HAPIPSessionDescriptor* session) {
             }
         }
 
-        if (numReadContexts > 0) {
-            HAPIPByteBuffer data_buffer;
-            data_buffer.data = server->ip.storage->scratchBuffer.bytes;
-            data_buffer.capacity = server->ip.storage->scratchBuffer.numBytes;
-            data_buffer.limit = server->ip.storage->scratchBuffer.numBytes;
-            data_buffer.position = 0;
-            HAPAssert(data_buffer.data);
-            HAPAssert(data_buffer.position <= data_buffer.limit);
-            HAPAssert(data_buffer.limit <= data_buffer.capacity);
-            int r = handle_characteristic_read_requests(
+        if (session->numContexts > 0) {
+            bool mutliStatus = false;
+            HAPIPByteBufferClear(&session->scratchBuffer);
+            session->inProgress.numContexts = handle_characteristic_read_requests(
                     session,
                     kHAPIPSessionContext_EventNotification,
-                    server->ip.storage->readContexts,
-                    numReadContexts,
-                    &data_buffer);
-            (void) r;
-
-            size_t content_length = HAPIPAccessoryProtocolGetNumEventNotificationBytes(
-                    HAPNonnull(session->server), server->ip.storage->readContexts, numReadContexts);
-
-            HAPAssert(session->outboundBuffer.data);
-            HAPAssert(session->outboundBuffer.position <= session->outboundBuffer.limit);
-            HAPAssert(session->outboundBuffer.limit <= session->outboundBuffer.capacity);
-            size_t mark = session->outboundBuffer.position;
-            err = HAPIPByteBufferAppendStringWithFormat(
-                    &session->outboundBuffer,
-                    "EVENT/1.0 200 OK\r\n"
-                    "Content-Type: application/hap+json\r\n"
-                    "Content-Length: %zu\r\n\r\n",
-                    content_length);
-            if (err) {
-                HAPAssert(err == kHAPError_OutOfResources);
-                HAPLog(&logObject, "Invalid configuration (outbound buffer too small).");
-                HAPFatalError();
-            }
-            if (content_length <= session->outboundBuffer.limit - session->outboundBuffer.position) {
-                mark = session->outboundBuffer.position;
-                err = HAPIPAccessoryProtocolGetEventNotificationBytes(
-                        HAPNonnull(session->server),
-                        server->ip.storage->readContexts,
-                        numReadContexts,
-                        &session->outboundBuffer);
-                HAPAssert(!err && (session->outboundBuffer.position - mark == content_length));
-                HAPIPByteBufferFlip(&session->outboundBuffer);
-                HAPLogBufferDebug(
-                        &logObject,
-                        session->outboundBuffer.data,
-                        session->outboundBuffer.limit,
-                        "session:%p:<",
-                        (const void*) session);
-                if (session->securitySession.isSecured) {
-                    size_t encrypted_length = HAPIPSecurityProtocolGetNumEncryptedBytes(
-                            session->outboundBuffer.limit - session->outboundBuffer.position);
-                    if (encrypted_length <= session->outboundBuffer.capacity - session->outboundBuffer.position) {
-                        HAPIPSecurityProtocolEncryptData(
-                                HAPNonnull(session->server), &session->securitySession.session, &session->outboundBuffer);
-                        HAPAssert(encrypted_length == session->outboundBuffer.limit - session->outboundBuffer.position);
-                        session->state = kHAPIPSessionState_Writing;
-                    } else {
-                        HAPLog(&logObject, "Skipping event notifications (outbound buffer too small).");
-                        HAPIPByteBufferClear(&session->outboundBuffer);
-                    }
-                } else {
-                    HAPAssert(kHAPIPAccessoryServer_SessionSecurityDisabled);
-                    HAP_DIAGNOSTIC_IGNORED_ICCARM(Pe111)
-                    session->state = kHAPIPSessionState_Writing;
-                    HAP_DIAGNOSTIC_RESTORE_ICCARM(Pe111)
-                }
-                if (session->state == kHAPIPSessionState_Writing) {
-                    HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
-                    HAPPlatformTCPStreamUpdateInterests(
-                            HAPNonnull(server->platform.ip.tcpStreamManager),
-                            session->tcpStream,
-                            interests,
-                            HandleTCPStreamEvent,
-                            session);
-                }
+                    session->contexts,
+                    session->numContexts,
+                    &mutliStatus,
+                    &session->scratchBuffer);
+            if (session->inProgress.numContexts) {
+                session->inProgress.state = kHAPIPSessionInProgressState_EventNotifications;
             } else {
-                HAPLog(&logObject, "Skipping event notifications (outbound buffer too small).");
-                session->outboundBuffer.position = mark;
+                finsh_write_event_notifications(session, session->contexts, session->numContexts);
+            }
+            if (session->state == kHAPIPSessionState_Writing) {
+                HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
+                HAPPlatformTCPStreamUpdateInterests(
+                        HAPNonnull(server->platform.ip.tcpStreamManager),
+                        session->tcpStream,
+                        interests,
+                        HandleTCPStreamEvent,
+                        session);
             }
         }
     } else {
@@ -3495,7 +2751,7 @@ static void WriteOutboundData(HAPIPSessionDescriptor* session) {
                 !HAPSessionIsSecured(&session->securitySession.session)) {
                 HAPLogDebug(&logObject, "Pairing removed, closing session.");
                 CloseSession(session);
-            } else if (session->accessorySerializationIsInProgress) {
+            } else if (session->inProgress.state == kHAPIPSessionInProgressState_GetAccessories) {
                 handle_accessory_serialization(session);
             } else {
                 HAPIPByteBufferClear(b);
@@ -3561,7 +2817,9 @@ static void ReadInboundData(HAPIPSessionDescriptor* session) {
     } else {
         HAPAssert(numBytes <= b->limit - b->position);
         b->position += numBytes;
-        handle_input(session);
+        if (session->inProgress.state == kHAPIPSessionInProgressState_None) {
+            handle_input(session);
+        }
     }
 }
 
@@ -3637,7 +2895,7 @@ static void HandlePendingTCPStream(HAPPlatformTCPStreamManagerRef tcpStreamManag
     }
 
     HAPIPSessionDescriptor* t = (HAPIPSessionDescriptor*) &ipSession->descriptor;
-    HAPRawBufferZero(t, sizeof *t);
+    HAPRawBufferZero(t, sizeof(*t));
     t->server = server_;
     t->tcpStream = tcpStream;
     t->tcpStreamIsOpen = true;
@@ -3645,22 +2903,13 @@ static void HandlePendingTCPStream(HAPPlatformTCPStreamManagerRef tcpStreamManag
     t->stamp = HAPPlatformClockGetCurrent();
     t->securitySession.isOpen = false;
     t->securitySession.isSecured = false;
-    t->inboundBuffer.position = 0;
-    t->inboundBuffer.limit = ipSession->inboundBuffer.numBytes;
-    t->inboundBuffer.capacity = ipSession->inboundBuffer.numBytes;
-    t->inboundBuffer.data = ipSession->inboundBuffer.bytes;
-    t->inboundBufferMark = 0;
-    t->outboundBuffer.position = 0;
-    t->outboundBuffer.limit = ipSession->outboundBuffer.numBytes;
-    t->outboundBuffer.capacity = ipSession->outboundBuffer.numBytes;
-    t->outboundBuffer.data = ipSession->outboundBuffer.bytes;
+    HAPIPByteBufferInit(&t->inboundBuffer, ipSession->inboundBuffer.bytes, ipSession->inboundBuffer.numBytes);
+    HAPIPByteBufferInit(&t->outboundBuffer, ipSession->outboundBuffer.bytes, ipSession->outboundBuffer.numBytes);
+    HAPIPByteBufferInit(&t->scratchBuffer, ipSession->scratchBuffer.bytes, ipSession->scratchBuffer.numBytes);
+    t->contexts = ipSession->contexts;
+    t->maxContexts = ipSession->numContexts;
     t->eventNotifications = ipSession->eventNotifications;
     t->maxEventNotifications = ipSession->numEventNotifications;
-    t->numEventNotifications = 0;
-    t->numEventNotificationFlags = 0;
-    t->eventNotificationStamp = 0;
-    t->timedWriteExpirationTime = 0;
-    t->timedWritePID = 0;
     OpenSecuritySession(t);
     t->state = kHAPIPSessionState_Reading;
     prepare_reading_request(t);
@@ -3695,6 +2944,10 @@ static void engine_init(HAPAccessoryServerRef* server_) {
                         server->ip.storage->sessions[i].inboundBuffer.numBytes ||
                 server->ip.storage->sessions[j].outboundBuffer.numBytes !=
                         server->ip.storage->sessions[i].outboundBuffer.numBytes ||
+                server->ip.storage->sessions[j].scratchBuffer.numBytes !=
+                        server->ip.storage->sessions[i].scratchBuffer.numBytes ||
+                server->ip.storage->sessions[j].numContexts !=
+                        server->ip.storage->sessions[i].numContexts ||
                 server->ip.storage->sessions[j].numEventNotifications !=
                         server->ip.storage->sessions[i].numEventNotifications) {
                 break;
@@ -3711,6 +2964,21 @@ static void engine_init(HAPAccessoryServerRef* server_) {
                     "Storage configuration: sessions[%lu].outboundBuffer.numBytes = %lu",
                     (unsigned long) i,
                     (unsigned long) server->ip.storage->sessions[i].outboundBuffer.numBytes);
+            HAPLogDebug(
+                    &logObject,
+                    "Storage configuration: sessions[%lu].scratchBuffer.numBytes = %lu",
+                    (unsigned long) i,
+                    (unsigned long) server->ip.storage->sessions[i].scratchBuffer.numBytes);
+            HAPLogDebug(
+                    &logObject,
+                    "Storage configuration: sessions[%lu].numContexts = %lu",
+                    (unsigned long) i,
+                    (unsigned long) server->ip.storage->sessions[i].numContexts);
+            HAPLogDebug(
+                    &logObject,
+                    "Storage configuration: sessions[%lu].contexts = %lu",
+                    (unsigned long) i,
+                    (unsigned long) (server->ip.storage->sessions[i].numContexts * sizeof(HAPIPCharacteristicContextRef)));
             HAPLogDebug(
                     &logObject,
                     "Storage configuration: sessions[%lu].numEventNotifications = %lu",
@@ -3736,6 +3004,24 @@ static void engine_init(HAPAccessoryServerRef* server_) {
                     (unsigned long) server->ip.storage->sessions[i].outboundBuffer.numBytes);
             HAPLogDebug(
                     &logObject,
+                    "Storage configuration: sessions[%lu...%lu].scratchBuffer.numBytes = %lu",
+                    (unsigned long) i,
+                    (unsigned long) j - 1,
+                    (unsigned long) server->ip.storage->sessions[i].scratchBuffer.numBytes);
+            HAPLogDebug(
+                    &logObject,
+                    "Storage configuration: sessions[%lu...%lu].numContexts = %lu",
+                    (unsigned long) i,
+                    (unsigned long) j - 1,
+                    (unsigned long) server->ip.storage->sessions[i].numContexts);
+            HAPLogDebug(
+                    &logObject,
+                    "Storage configuration: sessions[%lu...%lu].contexts = %lu",
+                    (unsigned long) i,
+                    (unsigned long) j - 1,
+                    (unsigned long) (server->ip.storage->sessions[i].numContexts * sizeof(HAPIPCharacteristicContextRef)));
+            HAPLogDebug(
+                    &logObject,
                     "Storage configuration: sessions[%lu...%lu].numEventNotifications = %lu",
                     (unsigned long) i,
                     (unsigned long) j - 1,
@@ -3749,26 +3035,6 @@ static void engine_init(HAPAccessoryServerRef* server_) {
         }
         i = j;
     }
-    HAPLogDebug(
-            &logObject,
-            "Storage configuration: numReadContexts = %lu",
-            (unsigned long) server->ip.storage->numReadContexts);
-    HAPLogDebug(
-            &logObject,
-            "Storage configuration: readContexts = %lu",
-            (unsigned long) (server->ip.storage->numReadContexts * sizeof(HAPIPReadContextRef)));
-    HAPLogDebug(
-            &logObject,
-            "Storage configuration: numWriteContexts = %lu",
-            (unsigned long) server->ip.storage->numWriteContexts);
-    HAPLogDebug(
-            &logObject,
-            "Storage configuration: writeContexts = %lu",
-            (unsigned long) (server->ip.storage->numWriteContexts * sizeof(HAPIPWriteContextRef)));
-    HAPLogDebug(
-            &logObject,
-            "Storage configuration: scratchBuffer.numBytes = %lu",
-            (unsigned long) server->ip.storage->scratchBuffer.numBytes);
 
     HAPAssert(server->ip.state == kHAPIPAccessoryServerState_Undefined);
 
@@ -3782,17 +3048,6 @@ static HAPError engine_deinit(HAPAccessoryServerRef* server_) {
     HAPAccessoryServer* server = (HAPAccessoryServer*) server_;
 
     HAPAssert(server->ip.state == kHAPIPAccessoryServerState_Idle);
-
-    HAPIPAccessoryServerStorage* storage = HAPNonnull(server->ip.storage);
-
-    HAPAssert(storage->readContexts);
-    HAPRawBufferZero(storage->readContexts, storage->numReadContexts * sizeof *storage->readContexts);
-
-    HAPAssert(storage->writeContexts);
-    HAPRawBufferZero(storage->writeContexts, storage->numWriteContexts * sizeof *storage->writeContexts);
-
-    HAPAssert(storage->scratchBuffer.bytes);
-    HAPRawBufferZero(storage->scratchBuffer.bytes, storage->scratchBuffer.numBytes);
 
     server->ip.state = kHAPIPAccessoryServerState_Undefined;
 
@@ -3937,6 +3192,17 @@ static HAPError engine_raise_event_on_session_(
             continue;
         }
 
+        if (session->inProgress.state == kHAPIPSessionInProgressState_PutCharacteristics) {
+            HAPIPCharacteristicContext *ctx = get_ctx_by_iid(
+                    accessory_->aid,
+                    ((HAPBaseCharacteristic*) characteristic_)->iid,
+                    session->contexts,
+                    session->numContexts);
+            if (ctx && ctx->status == kHAPIPAccessoryServerStatusCode_InPorgress) {
+                continue;
+            }
+        }
+
         if ((ipSession != server->ip.characteristicWriteRequestContext.ipSession) ||
             (characteristic_ != server->ip.characteristicWriteRequestContext.characteristic) ||
             (service_ != server->ip.characteristicWriteRequestContext.service) ||
@@ -4008,6 +3274,554 @@ static HAPError engine_raise_event_on_session(
     return engine_raise_event_on_session_(server, characteristic, service, accessory, session);
 }
 
+static HAP_RESULT_USE_CHECK
+HAPError finsh_put_characteristics(
+        HAPAccessoryServer* server,
+        HAPIPSessionDescriptor* session,
+        HAPIPCharacteristicContext* context) {
+    HAPPrecondition(server);
+    HAPPrecondition(session);
+    HAPPrecondition(context->status != kHAPIPAccessoryServerStatusCode_InPorgress);
+
+    session->inProgress.numContexts--;
+    if (session->inProgress.mutliStatus == false &&
+        (context->status != kHAPIPAccessoryServerStatusCode_Success || context->write.response)) {
+        session->inProgress.mutliStatus = true;
+    }
+    if (session->inProgress.numContexts != 0) {
+        return kHAPError_None;
+    }
+
+    session->inProgress.state = kHAPIPSessionInProgressState_None;
+    if (session->inProgress.mutliStatus) {
+        write_characteristic_write_response(
+                session,
+                session->contexts,
+                session->numContexts);
+    } else {
+        write_msg(&session->outboundBuffer, kHAPIPAccessoryServerResponse_NoContent);
+    }
+    session->inProgress.mutliStatus = false;
+    output(session);
+    if (session->state == kHAPIPSessionState_Writing) {
+        HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
+        HAPPlatformTCPStreamUpdateInterests(
+                HAPNonnull(server->platform.ip.tcpStreamManager),
+                session->tcpStream,
+                interests,
+                HandleTCPStreamEvent,
+                session);
+    }
+
+    return kHAPError_None;
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError finsh_get_characteristics(
+        HAPAccessoryServer* server,
+        HAPIPSessionDescriptor* session,
+        HAPIPCharacteristicContext* context) {
+    HAPPrecondition(server);
+    HAPPrecondition(session);
+    HAPPrecondition(context->status != kHAPIPAccessoryServerStatusCode_InPorgress);
+
+    session->inProgress.numContexts--;
+    if (session->inProgress.mutliStatus == false &&
+        context->status != kHAPIPAccessoryServerStatusCode_Success) {
+        session->inProgress.mutliStatus = true;
+    }
+    if (session->inProgress.numContexts != 0) {
+        return kHAPError_None;
+    }
+
+    session->inProgress.state = kHAPIPSessionInProgressState_None;
+    write_characteristic_read_response(
+            session,
+            session->contexts,
+            session->numContexts,
+            &session->inProgress.parameters,
+            session->inProgress.mutliStatus);
+    session->inProgress.mutliStatus = false;
+    output(session);
+
+    if (session->state == kHAPIPSessionState_Writing) {
+        HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
+        HAPPlatformTCPStreamUpdateInterests(
+                HAPNonnull(server->platform.ip.tcpStreamManager),
+                session->tcpStream,
+                interests,
+                HandleTCPStreamEvent,
+                session);
+    }
+
+    return kHAPError_None;
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError finsh_get_accessories(
+        HAPAccessoryServer* server,
+        HAPIPSessionDescriptor* session,
+        HAPIPCharacteristicContext* context) {
+    HAPPrecondition(server);
+    HAPPrecondition(session);
+    HAPPrecondition(context->status != kHAPIPAccessoryServerStatusCode_InPorgress);
+
+    session->inProgress.numContexts--;
+    HAPAssert(session->inProgress.numContexts == 0);
+    handle_accessory_serialization(session);
+    if (session->state == kHAPIPSessionState_Writing) {
+        HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
+        HAPPlatformTCPStreamUpdateInterests(
+                HAPNonnull(server->platform.ip.tcpStreamManager),
+                session->tcpStream,
+                interests,
+                HandleTCPStreamEvent,
+                session);
+    }
+    return kHAPError_None;
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError finsh_event_notifications(
+        HAPAccessoryServer* server,
+        HAPIPSessionDescriptor* session,
+        HAPIPCharacteristicContext* context) {
+    HAPPrecondition(server);
+    HAPPrecondition(session);
+    HAPPrecondition(context->status != kHAPIPAccessoryServerStatusCode_InPorgress);
+
+    session->inProgress.numContexts--;
+    if (session->inProgress.numContexts != 0) {
+        return kHAPError_None;
+    }
+
+    session->inProgress.state = kHAPIPSessionInProgressState_None;
+    finsh_write_event_notifications(session, session->contexts, session->numContexts);
+    if (session->state == kHAPIPSessionState_Writing) {
+        HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
+        HAPPlatformTCPStreamUpdateInterests(
+                HAPNonnull(server->platform.ip.tcpStreamManager),
+                session->tcpStream,
+                interests,
+                HandleTCPStreamEvent,
+                session);
+    }
+    return kHAPError_None;
+}
+
+static HAP_RESULT_USE_CHECK 
+HAPError response_write_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPCharacteristic* characteristic,
+        HAPError result) {
+    HAPPrecondition(_server);
+    HAPPrecondition(_session);
+    HAPPrecondition(accessory);
+    HAPPrecondition(service);
+    HAPPrecondition(characteristic);
+    HAPPrecondition(result != kHAPError_InProgress);
+
+    HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
+    HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
+    if (session == NULL ||
+        session->inProgress.state != kHAPIPSessionInProgressState_PutCharacteristics ||
+        session->inProgress.numContexts == 0) {
+        return kHAPError_InvalidState;
+    }
+
+    HAPIPCharacteristicContext* context = get_ctx_by_iid(
+            accessory->aid,
+            ((HAPBaseCharacteristic* ) characteristic)->iid,
+            session->contexts,
+            session->numContexts);
+    if (context == NULL || context->status != kHAPIPAccessoryServerStatusCode_InPorgress) {
+        return kHAPError_InvalidState;
+    }
+
+    context->status = HAPIPCharacteristicConvertWriteErrorToStatusCode(result);
+    HAPIPCharacteristicFinshWriteRequest(
+            (HAPIPSessionDescriptorRef*) session,
+            characteristic,
+            service,
+            accessory,
+            (HAPIPCharacteristicContextRef*) context,
+            &session->scratchBuffer);
+    if (context->status == kHAPIPAccessoryServerStatusCode_InPorgress) {
+        return kHAPError_None;
+    }
+
+    return finsh_put_characteristics(server, session, context);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError finsh_read_request(
+        HAPAccessoryServer* server,
+        HAPIPSessionDescriptor* session,
+        HAPIPCharacteristicContext* context) {
+    switch (session->inProgress.state) {
+    case kHAPIPSessionInProgressState_GetAccessories:
+        return finsh_get_accessories(server, session, context);
+    case kHAPIPSessionInProgressState_PutCharacteristics:
+        return finsh_put_characteristics(server, session, context);
+    case kHAPIPSessionInProgressState_GetCharacteristics:
+        return finsh_get_characteristics(server, session, context);
+    case kHAPIPSessionInProgressState_EventNotifications:
+        return finsh_event_notifications(server, session, context);
+    default:
+        HAPAssertionFailure();
+    }
+
+    return kHAPError_Unknown;
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_data_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPDataCharacteristic* characteristic,
+        HAPError result,
+        const void* valueBytes,
+        size_t numValueBytes) {
+    HAPPrecondition(_server);
+    HAPPrecondition(_session);
+    HAPPrecondition(accessory);
+    HAPPrecondition(service);
+    HAPPrecondition(characteristic);
+    HAPPrecondition(result != kHAPError_InProgress);
+    if (result == kHAPError_None) {
+        HAPPrecondition(valueBytes);
+    }
+
+    HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
+    HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
+    if (session == NULL ||
+        session->inProgress.state == kHAPIPSessionInProgressState_None) {
+        return kHAPError_InvalidState;
+    }
+
+    HAPIPCharacteristicContext* context = get_ctx_by_iid(
+            accessory->aid,
+            ((HAPBaseCharacteristic* ) characteristic)->iid,
+            session->contexts,
+            session->numContexts);
+    if (context == NULL || context->status != kHAPIPAccessoryServerStatusCode_InPorgress) {
+        return kHAPError_InvalidState;
+    }
+
+    context->status = HAPIPCharacteristicConvertReadErrorToStatusCode(result);
+    if (context->status == kHAPIPAccessoryServerStatusCode_Success) {
+        HAPIPCharacteristicContextSetDataValue(
+                (HAPIPCharacteristicContextRef*) context, &session->scratchBuffer, valueBytes, numValueBytes);
+    }
+
+    return finsh_read_request(server, session, context);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_bool_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPBoolCharacteristic* characteristic,
+        HAPError result,
+        bool value) {
+    HAPPrecondition(_server);
+    HAPPrecondition(_session);
+    HAPPrecondition(accessory);
+    HAPPrecondition(service);
+    HAPPrecondition(characteristic);
+    HAPPrecondition(result != kHAPError_InProgress);
+
+    HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
+    HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
+    if (session == NULL ||
+        session->inProgress.state == kHAPIPSessionInProgressState_None) {
+        return kHAPError_InvalidState;
+    }
+
+    HAPIPCharacteristicContext* context = get_ctx_by_iid(
+            accessory->aid,
+            ((HAPBaseCharacteristic* ) characteristic)->iid,
+            session->contexts,
+            session->numContexts);
+    if (context == NULL || context->status != kHAPIPAccessoryServerStatusCode_InPorgress) {
+        return kHAPError_InvalidState;
+    }
+
+    context->status = HAPIPCharacteristicConvertReadErrorToStatusCode(result);
+    if (context->status == kHAPIPAccessoryServerStatusCode_Success) {
+        HAPIPCharacteristicContextSetUIntValue(
+                (HAPIPCharacteristicContextRef*) context, value ? 1 : 0);
+    }
+
+    return finsh_read_request(server, session, context);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_uint_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPCharacteristic* characteristic,
+        HAPError result,
+        uint64_t value) {
+    HAPPrecondition(_server);
+    HAPPrecondition(_session);
+    HAPPrecondition(accessory);
+    HAPPrecondition(service);
+    HAPPrecondition(characteristic);
+    HAPPrecondition(result != kHAPError_InProgress);
+
+    HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
+    HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
+    if (session == NULL ||
+        session->inProgress.state == kHAPIPSessionInProgressState_None) {
+        return kHAPError_InvalidState;
+    }
+
+    HAPIPCharacteristicContext* context = get_ctx_by_iid(
+            accessory->aid,
+            ((HAPBaseCharacteristic* ) characteristic)->iid,
+            session->contexts,
+            session->numContexts);
+    if (context == NULL || context->status != kHAPIPAccessoryServerStatusCode_InPorgress) {
+        return kHAPError_InvalidState;
+    }
+
+    context->status = HAPIPCharacteristicConvertReadErrorToStatusCode(result);
+    if (context->status == kHAPIPAccessoryServerStatusCode_Success) {
+        HAPIPCharacteristicContextSetUIntValue(
+                (HAPIPCharacteristicContextRef*) context, value);
+    }
+
+    return finsh_read_request(server, session, context);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_uint8_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPUInt8Characteristic* characteristic,
+        HAPError result,
+        uint8_t value) {
+    return response_uint_read_request(_server, _session, accessory, service, characteristic, result, value);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_uint16_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPUInt16Characteristic* characteristic,
+        HAPError result,
+        uint16_t value) {
+    return response_uint_read_request(_server, _session, accessory, service, characteristic, result, value);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_uint32_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPUInt32Characteristic* characteristic,
+        HAPError result,
+        uint32_t value) {
+    return response_uint_read_request(_server, _session, accessory, service, characteristic, result, value);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_uint64_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPUInt64Characteristic* characteristic,
+        HAPError result,
+        uint64_t value) {
+    return response_uint_read_request(_server, _session, accessory, service, characteristic, result, value);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_int_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPIntCharacteristic* characteristic,
+        HAPError result,
+        int32_t value) {
+    HAPPrecondition(_server);
+    HAPPrecondition(_session);
+    HAPPrecondition(accessory);
+    HAPPrecondition(service);
+    HAPPrecondition(characteristic);
+    HAPPrecondition(result != kHAPError_InProgress);
+
+    HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
+    HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
+    if (session == NULL ||
+        session->inProgress.state == kHAPIPSessionInProgressState_None) {
+        return kHAPError_InvalidState;
+    }
+
+    HAPIPCharacteristicContext* context = get_ctx_by_iid(
+            accessory->aid,
+            ((HAPBaseCharacteristic* ) characteristic)->iid,
+            session->contexts,
+            session->numContexts);
+    if (context == NULL || context->status != kHAPIPAccessoryServerStatusCode_InPorgress) {
+        return kHAPError_InvalidState;
+    }
+
+    context->status = HAPIPCharacteristicConvertReadErrorToStatusCode(result);
+    if (context->status == kHAPIPAccessoryServerStatusCode_Success) {
+        HAPIPCharacteristicContextSetIntValue(
+                (HAPIPCharacteristicContextRef*) context, value);
+    }
+
+    return finsh_read_request(server, session, context);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_float_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPFloatCharacteristic* characteristic,
+        HAPError result,
+        float value) {
+    HAPPrecondition(_server);
+    HAPPrecondition(_session);
+    HAPPrecondition(accessory);
+    HAPPrecondition(service);
+    HAPPrecondition(characteristic);
+    HAPPrecondition(result != kHAPError_InProgress);
+
+    HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
+    HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
+    if (session == NULL ||
+        session->inProgress.state == kHAPIPSessionInProgressState_None) {
+        return kHAPError_InvalidState;
+    }
+
+    HAPIPCharacteristicContext* context = get_ctx_by_iid(
+            accessory->aid,
+            ((HAPBaseCharacteristic* ) characteristic)->iid,
+            session->contexts,
+            session->numContexts);
+    if (context == NULL || context->status != kHAPIPAccessoryServerStatusCode_InPorgress) {
+        return kHAPError_InvalidState;
+    }
+
+    context->status = HAPIPCharacteristicConvertReadErrorToStatusCode(result);
+    if (context->status == kHAPIPAccessoryServerStatusCode_Success) {
+        HAPIPCharacteristicContextSetFloatValue(
+                (HAPIPCharacteristicContextRef*) context, value);
+    }
+
+    return finsh_read_request(server, session, context);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_string_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPStringCharacteristic* characteristic,
+        HAPError result,
+        const char* value) {
+    HAPPrecondition(_server);
+    HAPPrecondition(_session);
+    HAPPrecondition(accessory);
+    HAPPrecondition(service);
+    HAPPrecondition(characteristic);
+    HAPPrecondition(result != kHAPError_InProgress);
+    if (result == kHAPError_None) {
+        HAPPrecondition(value);
+    }
+
+    HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
+    HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
+    if (session == NULL ||
+        session->inProgress.state == kHAPIPSessionInProgressState_None) {
+        return kHAPError_InvalidState;
+    }
+
+    HAPIPCharacteristicContext* context = get_ctx_by_iid(
+            accessory->aid,
+            ((HAPBaseCharacteristic* ) characteristic)->iid,
+            session->contexts,
+            session->numContexts);
+    if (context == NULL || context->status != kHAPIPAccessoryServerStatusCode_InPorgress) {
+        return kHAPError_InvalidState;
+    }
+
+    context->status = HAPIPCharacteristicConvertReadErrorToStatusCode(result);
+    if (context->status == kHAPIPAccessoryServerStatusCode_Success) {
+        HAPIPCharacteristicContextSetStringValue(
+                (HAPIPCharacteristicContextRef*) context, &session->scratchBuffer, value);
+    }
+
+    return finsh_read_request(server, session, context);
+}
+
+static HAP_RESULT_USE_CHECK
+HAPError response_tlv8_read_request(
+        HAPAccessoryServerRef* _server,
+        HAPSessionRef* _session,
+        const HAPAccessory* accessory,
+        const HAPService* service,
+        const HAPTLV8Characteristic* characteristic,
+        HAPError result,
+        HAPTLVWriterRef* writer) {
+    HAPPrecondition(_server);
+    HAPPrecondition(_session);
+    HAPPrecondition(accessory);
+    HAPPrecondition(service);
+    HAPPrecondition(characteristic);
+    HAPPrecondition(result != kHAPError_InProgress);
+    if (result == kHAPError_None) {
+        HAPPrecondition(writer);
+    }
+
+    HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
+    HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
+    if (session == NULL ||
+        session->inProgress.state == kHAPIPSessionInProgressState_None) {
+        return kHAPError_InvalidState;
+    }
+
+    HAPIPCharacteristicContext* context = get_ctx_by_iid(
+            accessory->aid,
+            ((HAPBaseCharacteristic* ) characteristic)->iid,
+            session->contexts,
+            session->numContexts);
+    if (context == NULL || context->status != kHAPIPAccessoryServerStatusCode_InPorgress) {
+        return kHAPError_InvalidState;
+    }
+
+    context->status = HAPIPCharacteristicConvertReadErrorToStatusCode(result);
+    if (context->status == kHAPIPAccessoryServerStatusCode_Success) {
+        HAPIPCharacteristicContextSetTLV8Value(
+                (HAPIPCharacteristicContextRef*) context, &session->scratchBuffer, writer);
+    }
+
+    return finsh_read_request(server, session, context);
+}
+
 static void Create(HAPAccessoryServerRef* server_, const HAPAccessoryServerOptions* options) {
     HAPPrecondition(server_);
     HAPAccessoryServer* server = (HAPAccessoryServer*) server_;
@@ -4027,49 +3841,16 @@ static void Create(HAPAccessoryServerRef* server_, const HAPAccessoryServerOptio
     // Initialize IP storage.
     HAPPrecondition(options->ip.accessoryServerStorage);
     HAPIPAccessoryServerStorage* storage = options->ip.accessoryServerStorage;
-    HAPPrecondition(storage->readContexts);
-    HAPPrecondition(storage->writeContexts);
-    HAPPrecondition(storage->scratchBuffer.bytes);
     HAPPrecondition(storage->sessions);
     HAPPrecondition(storage->numSessions);
     for (size_t i = 0; i < storage->numSessions; i++) {
-        HAPIPSession* session = &storage->sessions[i];
-        HAPPrecondition(session->inboundBuffer.bytes);
-        HAPPrecondition(session->outboundBuffer.bytes);
-        HAPPrecondition(session->eventNotifications);
-    }
-    HAPRawBufferZero(storage->readContexts, storage->numReadContexts * sizeof *storage->readContexts);
-    HAPRawBufferZero(storage->writeContexts, storage->numWriteContexts * sizeof *storage->writeContexts);
-    HAPRawBufferZero(storage->scratchBuffer.bytes, storage->scratchBuffer.numBytes);
-    for (size_t i = 0; i < storage->numSessions; i++) {
-        HAPIPSession* ipSession = &storage->sessions[i];
-        HAPRawBufferZero(&ipSession->descriptor, sizeof ipSession->descriptor);
-        HAPRawBufferZero(ipSession->inboundBuffer.bytes, ipSession->inboundBuffer.numBytes);
-        HAPRawBufferZero(ipSession->outboundBuffer.bytes, ipSession->outboundBuffer.numBytes);
-        HAPRawBufferZero(
-                ipSession->eventNotifications,
-                ipSession->numEventNotifications * sizeof *ipSession->eventNotifications);
+        HAPIPSessionReset(&storage->sessions[i]);
     }
     server->ip.storage = options->ip.accessoryServerStorage;
 }
 
 static void PrepareStart(HAPAccessoryServerRef* server_) {
     HAPPrecondition(server_);
-    HAPAccessoryServer* server = (HAPAccessoryServer*) server_;
-
-    HAPIPAccessoryServerStorage* storage = HAPNonnull(server->ip.storage);
-    HAPRawBufferZero(storage->readContexts, storage->numReadContexts * sizeof *storage->readContexts);
-    HAPRawBufferZero(storage->writeContexts, storage->numWriteContexts * sizeof *storage->writeContexts);
-    HAPRawBufferZero(storage->scratchBuffer.bytes, storage->scratchBuffer.numBytes);
-    for (size_t i = 0; i < storage->numSessions; i++) {
-        HAPIPSession* ipSession = &storage->sessions[i];
-        HAPRawBufferZero(&ipSession->descriptor, sizeof ipSession->descriptor);
-        HAPRawBufferZero(ipSession->inboundBuffer.bytes, ipSession->inboundBuffer.numBytes);
-        HAPRawBufferZero(ipSession->outboundBuffer.bytes, ipSession->outboundBuffer.numBytes);
-        HAPRawBufferZero(
-                ipSession->eventNotifications,
-                ipSession->numEventNotifications * sizeof *ipSession->eventNotifications);
-    }
 }
 
 static void PrepareStop(HAPAccessoryServerRef* server_) {
@@ -4086,13 +3867,26 @@ const HAPIPAccessoryServerTransport kHAPAccessoryServerTransport_IP = {
     .prepareStart = PrepareStart,
     .prepareStop = PrepareStop,
     .session = { .invalidateDependentIPState = HAPSessionInvalidateDependentIPState },
-    .serverEngine = { .init = engine_init,
-                      .deinit = engine_deinit,
-                      .getState = engine_get_state,
-                      .start = engine_start,
-                      .stop = engine_stop,
-                      .raiseEvent = engine_raise_event,
-                      .raiseEventOnSession = engine_raise_event_on_session },
+    .serverEngine = {
+        .init = engine_init,
+        .deinit = engine_deinit,
+        .getState = engine_get_state,
+        .start = engine_start,
+        .stop = engine_stop,
+        .raiseEvent = engine_raise_event,
+        .raiseEventOnSession = engine_raise_event_on_session,
+        .responseWriteRequest = response_write_request,
+        .responseDataReadRequest = response_data_read_request,
+        .responseBoolReadRequest = response_bool_read_request,
+        .responseUInt8ReadRequest = response_uint8_read_request,
+        .responseUInt16ReadRequest = response_uint16_read_request,
+        .responseUInt32ReadRequest = response_uint32_read_request,
+        .responseUInt64ReadRequest = response_uint64_read_request,
+        .responseIntReadRequest = response_int_read_request,
+        .responseFloatReadRequest = response_float_read_request,
+        .responseStringReadRequest = response_string_read_request,
+        .responseTLV8ReadRequest = response_tlv8_read_request,
+    }
 };
 
 HAP_RESULT_USE_CHECK
@@ -4155,7 +3949,7 @@ void HAPIPSessionHandleReadRequest(
         const HAPCharacteristic* characteristic,
         const HAPService* service,
         const HAPAccessory* accessory,
-        HAPIPSessionReadResult* readResult,
+        HAPIPCharacteristicContextRef* _readResult,
         HAPIPByteBuffer* dataBuffer) {
     HAPPrecondition(session_);
     HAPIPSessionDescriptor* session = (HAPIPSessionDescriptor*) session_;
@@ -4163,18 +3957,14 @@ void HAPIPSessionHandleReadRequest(
     HAPPrecondition(session->securitySession.isOpen);
     HAPPrecondition(session->securitySession.isSecured || kHAPIPAccessoryServer_SessionSecurityDisabled);
     HAPPrecondition(!HAPSessionIsTransient(&session->securitySession.session));
-    HAPPrecondition(readResult);
+    HAPPrecondition(_readResult);
+    HAPIPCharacteristicContext* readResult = (HAPIPCharacteristicContext*) _readResult;
     HAPPrecondition(dataBuffer);
-
-    HAPRawBufferZero(readResult, sizeof *readResult);
 
     const HAPBaseCharacteristic* baseCharacteristic = (const HAPBaseCharacteristic*) characteristic;
 
-    HAPIPReadContext readContext;
-    HAPRawBufferZero(&readContext, sizeof readContext);
-
-    readContext.aid = accessory->aid;
-    readContext.iid = baseCharacteristic->iid;
+    readResult->aid = accessory->aid;
+    readResult->iid = baseCharacteristic->iid;
 
     if (!HAPCharacteristicReadRequiresAdminPermissions(baseCharacteristic) ||
         HAPSessionControllerIsAdmin(&session->securitySession.session)) {
@@ -4192,30 +3982,13 @@ void HAPIPSessionHandleReadRequest(
                     baseCharacteristic->properties.ip.controlPoint) {
                 readResult->status = kHAPIPAccessoryServerStatusCode_UnableToPerformOperation;
             } else {
-                handle_characteristic_read_request(
-                        session, characteristic, service, accessory, (HAPIPReadContextRef*) &readContext, dataBuffer);
-                readResult->status = readContext.status;
-                switch (baseCharacteristic->format) {
-                    case kHAPCharacteristicFormat_Bool:
-                    case kHAPCharacteristicFormat_UInt8:
-                    case kHAPCharacteristicFormat_UInt16:
-                    case kHAPCharacteristicFormat_UInt32:
-                    case kHAPCharacteristicFormat_UInt64: {
-                        readResult->value.unsignedIntValue = readContext.value.unsignedIntValue;
-                    } break;
-                    case kHAPCharacteristicFormat_Int: {
-                        readResult->value.intValue = readContext.value.intValue;
-                    } break;
-                    case kHAPCharacteristicFormat_Float: {
-                        readResult->value.floatValue = readContext.value.floatValue;
-                    } break;
-                    case kHAPCharacteristicFormat_Data:
-                    case kHAPCharacteristicFormat_String:
-                    case kHAPCharacteristicFormat_TLV8: {
-                        readResult->value.stringValue.bytes = readContext.value.stringValue.bytes;
-                        readResult->value.stringValue.numBytes = readContext.value.stringValue.numBytes;
-                    } break;
-                }
+                HAPIPCharacteristicHandleReadRequest(
+                        session_,
+                        characteristic,
+                        service,
+                        accessory,
+                        _readResult,
+                        dataBuffer);
             }
         } else {
             readResult->status = kHAPIPAccessoryServerStatusCode_ReadFromWriteOnlyCharacteristic;

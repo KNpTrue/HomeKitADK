@@ -215,13 +215,13 @@ void HAPTLVWriterGetScratchBytes(
 /**
  * HomeKit Accessory server.
  */
-typedef HAP_OPAQUE(2418) HAPAccessoryServerRef;
+typedef HAP_OPAQUE(1904) HAPAccessoryServerRef;
 HAP_NONNULL_SUPPORT(HAPAccessoryServerRef)
 
 /**
  * HomeKit Session.
  */
-typedef HAP_OPAQUE(488) HAPSessionRef;
+typedef HAP_OPAQUE(424) HAPSessionRef;
 HAP_NONNULL_SUPPORT(HAPSessionRef)
 
 /**
@@ -3569,19 +3569,14 @@ HAP_NONNULL_SUPPORT(HAPAccessory)
 #define kHAPPairingStorage_MinElements ((HAPPlatformKeyValueStoreKey) 16)
 
 /**
- * IP read context.
+ * IP request context.
  */
-typedef HAP_OPAQUE(48) HAPIPReadContextRef;
-
-/**
- * IP write context.
- */
-typedef HAP_OPAQUE(64) HAPIPWriteContextRef;
+typedef HAP_OPAQUE(64) HAPIPCharacteristicContextRef;
 
 /**
  * IP session descriptor.
  */
-typedef HAP_OPAQUE(832) HAPIPSessionDescriptorRef;
+typedef HAP_OPAQUE(824) HAPIPSessionDescriptorRef;
 
 /**
  * IP event notification.
@@ -3654,6 +3649,19 @@ typedef struct {
     } outboundBuffer;
 
     /**
+     * IP characteristic contexts used to stroage data when reading or writing characteristics.
+     *
+     * - At least one of these structures must be allocated per HomeKit characteristic and service and must remain
+     *   valid while the accessory server is initialized.
+     */
+    HAPIPCharacteristicContextRef* contexts;
+
+    /**
+     * Number of request contexts.
+     */
+    size_t numContexts;
+
+    /**
      * Event notifications.
      *
      * - At least one of these structures must be allocated per HomeKit characteristic and service and must remain
@@ -3665,6 +3673,24 @@ typedef struct {
      * Number of event notification structures.
      */
     size_t numEventNotifications;
+
+    /**
+     * Scratch buffer.
+     */
+    struct {
+        /**
+         * Scratch buffer. Memory must be allocated and must remain valid while the accessory server is initialized.
+         *
+         * - It is recommended to allocate at least kHAPIPSession_DefaultScratchBufferSize bytes,
+         *   but the optimal size may vary depending on the accessory's attribute database.
+         */
+        void* bytes;
+
+        /**
+         * Size of scratch buffer.
+         */
+        size_t numBytes;
+    } scratchBuffer;
 } HAPIPSession;
 
 /**
@@ -3696,50 +3722,6 @@ typedef struct {
      * Number of sessions.
      */
     size_t numSessions;
-
-    /**
-     * IP read contexts.
-     *
-     * - At least one of these structures must be allocated per HomeKit characteristic and service and must remain
-     *   valid while the accessory server is initialized.
-     */
-    HAPIPReadContextRef* readContexts;
-
-    /**
-     * Number of read contexts.
-     */
-    size_t numReadContexts;
-
-    /**
-     * IP write contexts.
-     *
-     * - At least one of these structures must be allocated per HomeKit characteristic and service and must remain
-     *   valid while the accessory server is initialized.
-     */
-    HAPIPWriteContextRef* writeContexts;
-
-    /**
-     * Number of write contexts.
-     */
-    size_t numWriteContexts;
-
-    /**
-     * Scratch buffer.
-     */
-    struct {
-        /**
-         * Scratch buffer. Memory must be allocated and must remain valid while the accessory server is initialized.
-         *
-         * - It is recommended to allocate at least kHAPIPSession_DefaultScratchBufferSize bytes,
-         *   but the optimal size may vary depending on the accessory's attribute database.
-         */
-        void* bytes;
-
-        /**
-         * Size of scratch buffer.
-         */
-        size_t numBytes;
-    } scratchBuffer;
 } HAPIPAccessoryServerStorage;
 HAP_NONNULL_SUPPORT(HAPIPAccessoryServerStorage)
 
@@ -4487,6 +4469,7 @@ HAPError HAPLegacyImportControllerPairing(
 #endif
 
 #include "HAPCharacteristicTypes.h"
+#include "HAPCharacteristicResponse.h"
 #include "HAPRequestHandlers.h"
 #include "HAPServiceTypes.h"
 

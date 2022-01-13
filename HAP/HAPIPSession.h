@@ -37,22 +37,6 @@ HAP_ENUM_BEGIN(uint8_t, HAPIPSessionContext) { /**
 } HAP_ENUM_END(uint8_t, HAPIPSessionContext);
 
 /**
- * Read result.
- */
-typedef struct {
-    int32_t status;
-    union {
-        int32_t intValue;
-        uint64_t unsignedIntValue;
-        float floatValue;
-        struct {
-            char* _Nullable bytes;
-            size_t numBytes;
-        } stringValue;
-    } value;
-} HAPIPSessionReadResult;
-
-/**
  * Returns whether event notifications are enabled for a given characteristic in a given service provided by a given
  * accessory object on a given session.
  *
@@ -79,7 +63,7 @@ bool HAPIPSessionAreEventNotificationsEnabled(
  * @param      characteristic       The characteristic whose event notification state is to be returned.
  * @param      service              The service that contains the characteristic.
  * @param      accessory            The accessory that provides the service.
- * @param      readResult           The result of the of the read request.
+ * @param      context              The context to hold the result of the of the read request.
  * @param      dataBuffer           Buffer to store data blobs, strings, or a set of one or more TLV8's.
  */
 void HAPIPSessionHandleReadRequest(
@@ -88,7 +72,7 @@ void HAPIPSessionHandleReadRequest(
         const HAPCharacteristic* characteristic,
         const HAPService* service,
         const HAPAccessory* accessory,
-        HAPIPSessionReadResult* readResult,
+        HAPIPCharacteristicContextRef* context,
         HAPIPByteBuffer* dataBuffer);
 
 #if __has_feature(nullability)
