@@ -103,6 +103,11 @@ static const HAPLogObject logObject = { .subsystem = kHAP_LogSubsystem, .categor
  */
 #define kHAPIPAccessoryServer_MaxEventNotificationDelay ((HAPTime)(1 * HAPSecond))
 
+/**
+ * Timeout for every event notifications progress.
+ */
+#define kHAPIPAccessoryServer_EventNotificationTimeout ((HAPTime)(5 * HAPSecond))
+
 static void HandleTCPStreamEvent(
         HAPPlatformTCPStreamManagerRef tcpStreamManager,
         HAPPlatformTCPStreamRef tcpStream,
@@ -463,6 +468,14 @@ static void CloseSession(HAPIPSessionDescriptor* session) {
         }
         session->numEventNotifications--;
         HAPIPCharacteristicHandleUnsubscribeRequest((HAPIPSessionDescriptorRef*) session, characteristic, service, accessory);
+    }
+    if (session->inProgress.state != kHAPIPSessionInProgressState_None) {
+        session->inProgress.state = kHAPIPSessionInProgressState_None;
+        session->inProgress.numContexts = 0;
+        if (session->inProgress.timer) {
+            HAPPlatformTimerDeregister(session->inProgress.timer);
+            session->inProgress.timer = 0;
+        }
     }
     if (session->securitySession.isOpen) {
         HAPLogDebug(&logObject, "session:%p:closing security context", (const void*) session);
@@ -2535,6 +2548,38 @@ static void finsh_write_event_notifications(
     }
 }
 
+void event_notification_timeout_timer(HAPPlatformTimerRef timer, void* _Nullable context) {
+    HAPIPSessionDescriptor* session = context;
+
+    HAPPrecondition(session);
+    HAPPrecondition(session->server);
+    HAPPrecondition(session->securitySession.isOpen);
+    HAPPrecondition(session->inProgress.state == kHAPIPSessionInProgressState_EventNotifications);
+    HAPPrecondition(session->inProgress.numContexts != 0);
+
+    HAPAccessoryServer* server = (HAPAccessoryServer*)session->server;
+    session->inProgress.timer = 0;
+
+    for (size_t i = 0; i < session->numContexts; i++) {
+        HAPIPCharacteristicContext* context = (HAPIPCharacteristicContext*) &session->contexts[i];
+        if (context->status == kHAPError_InProgress) {
+            context->status = kHAPError_Busy;
+        }
+    }
+    session->inProgress.numContexts = 0;
+    session->inProgress.state = kHAPIPSessionInProgressState_None;
+    finsh_write_event_notifications(session, session->contexts, session->numContexts);
+    if (session->state == kHAPIPSessionState_Writing) {
+        HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
+        HAPPlatformTCPStreamUpdateInterests(
+                HAPNonnull(server->platform.ip.tcpStreamManager),
+                session->tcpStream,
+                interests,
+                HandleTCPStreamEvent,
+                session);
+    }
+}
+
 static void write_event_notifications(HAPIPSessionDescriptor* session) {
     HAPPrecondition(session);
     HAPPrecondition(session->server);
@@ -2622,6 +2667,16 @@ static void write_event_notifications(HAPIPSessionDescriptor* session) {
                     &session->scratchBuffer);
             if (session->inProgress.numContexts) {
                 session->inProgress.state = kHAPIPSessionInProgressState_EventNotifications;
+                HAPAssert(session->inProgress.timer == 0);
+                HAPError err = HAPPlatformTimerRegister(
+                        &session->inProgress.timer,
+                        clock_now_ms + kHAPIPAccessoryServer_EventNotificationTimeout,
+                        event_notification_timeout_timer,
+                        session);
+                if (err) {
+                    HAPLog(&logObject, "Not enough resources to schedule event notification timeout timer!");
+                    HAPFatalError();
+                }
             } else {
                 finsh_write_event_notifications(session, session->contexts, session->numContexts);
             }
@@ -3395,6 +3450,10 @@ HAPError finsh_event_notifications(
         return kHAPError_None;
     }
 
+    HAPAssert(session->inProgress.timer);
+    HAPPlatformTimerDeregister(session->inProgress.timer);
+    session->inProgress.timer = 0;
+
     session->inProgress.state = kHAPIPSessionInProgressState_None;
     finsh_write_event_notifications(session, session->contexts, session->numContexts);
     if (session->state == kHAPIPSessionState_Writing) {
@@ -3426,7 +3485,7 @@ HAPError response_write_request(
 
     HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
     HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
-    if (session == NULL ||
+    if (session == NULL || !session->securitySession.isOpen ||
         session->inProgress.state != kHAPIPSessionInProgressState_PutCharacteristics ||
         session->inProgress.numContexts == 0) {
         return kHAPError_InvalidState;
@@ -3499,7 +3558,7 @@ HAPError response_data_read_request(
 
     HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
     HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
-    if (session == NULL ||
+    if (session == NULL || !session->securitySession.isOpen ||
         session->inProgress.state == kHAPIPSessionInProgressState_None) {
         return kHAPError_InvalidState;
     }
@@ -3540,7 +3599,7 @@ HAPError response_bool_read_request(
 
     HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
     HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
-    if (session == NULL ||
+    if (session == NULL || !session->securitySession.isOpen ||
         session->inProgress.state == kHAPIPSessionInProgressState_None) {
         return kHAPError_InvalidState;
     }
@@ -3581,7 +3640,7 @@ HAPError response_uint_read_request(
 
     HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
     HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
-    if (session == NULL ||
+    if (session == NULL || !session->securitySession.isOpen ||
         session->inProgress.state == kHAPIPSessionInProgressState_None) {
         return kHAPError_InvalidState;
     }
@@ -3670,7 +3729,7 @@ HAPError response_int_read_request(
 
     HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
     HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
-    if (session == NULL ||
+    if (session == NULL || !session->securitySession.isOpen ||
         session->inProgress.state == kHAPIPSessionInProgressState_None) {
         return kHAPError_InvalidState;
     }
@@ -3711,7 +3770,7 @@ HAPError response_float_read_request(
 
     HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
     HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
-    if (session == NULL ||
+    if (session == NULL || !session->securitySession.isOpen ||
         session->inProgress.state == kHAPIPSessionInProgressState_None) {
         return kHAPError_InvalidState;
     }
@@ -3755,7 +3814,7 @@ HAPError response_string_read_request(
 
     HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
     HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
-    if (session == NULL ||
+    if (session == NULL || !session->securitySession.isOpen ||
         session->inProgress.state == kHAPIPSessionInProgressState_None) {
         return kHAPError_InvalidState;
     }
@@ -3799,7 +3858,7 @@ HAPError response_tlv8_read_request(
 
     HAPAccessoryServer* server = (HAPAccessoryServer*) _server;
     HAPIPSessionDescriptor* session = get_session_desc_by_session_ref(server, _session);
-    if (session == NULL ||
+    if (session == NULL || !session->securitySession.isOpen ||
         session->inProgress.state == kHAPIPSessionInProgressState_None) {
         return kHAPError_InvalidState;
     }

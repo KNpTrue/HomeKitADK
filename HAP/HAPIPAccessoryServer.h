@@ -489,6 +489,7 @@ typedef struct {
         HAPIPReadRequestParameters parameters;
         HAPIPSessionInProgressState state;
         size_t numContexts;
+        HAPPlatformTimerRef timer;
     } inProgress;
 } HAPIPSessionDescriptor;
 HAP_STATIC_ASSERT(sizeof(HAPIPSessionDescriptorRef) >= sizeof(HAPIPSessionDescriptor), HAPIPSessionDescriptor);

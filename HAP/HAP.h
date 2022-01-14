@@ -3576,7 +3576,7 @@ typedef HAP_OPAQUE(64) HAPIPCharacteristicContextRef;
 /**
  * IP session descriptor.
  */
-typedef HAP_OPAQUE(824) HAPIPSessionDescriptorRef;
+typedef HAP_OPAQUE(832) HAPIPSessionDescriptorRef;
 
 /**
  * IP event notification.
