@@ -1819,7 +1819,7 @@ static void identify_primary_accessory(HAPIPSessionDescriptor* session) {
                             .authorizationData = { .bytes = NULL, .numBytes = 0 } },
                     true,
                     HAPAccessoryServerGetClientContext(HAPNonnull(session->server)));
-            if (err && err != kHAPError_InProgress) {
+            if (err) {
                 HAPAssert(
                         err == kHAPError_Unknown || err == kHAPError_InvalidState || err == kHAPError_InvalidData ||
                         err == kHAPError_OutOfResources || err == kHAPError_NotAuthorized || err == kHAPError_Busy);
