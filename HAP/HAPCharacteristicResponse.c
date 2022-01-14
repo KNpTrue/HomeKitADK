@@ -22,6 +22,7 @@ HAPError HAPDataCharacteristicResponseReadRequest(
     HAPPrecondition(accessory);
     HAPPrecondition(service);
     HAPPrecondition(characteristic);
+    HAPPrecondition(characteristic->format == kHAPCharacteristicFormat_Data);
     HAPPrecondition(result != kHAPError_InProgress);
     if (result == kHAPError_None) {
         HAPPrecondition(valueBytes);
@@ -54,6 +55,7 @@ HAPError HAPBoolCharacteristicResponseReadRequest(
     HAPPrecondition(accessory);
     HAPPrecondition(service);
     HAPPrecondition(characteristic);
+    HAPPrecondition(characteristic->format == kHAPCharacteristicFormat_Bool);
     HAPPrecondition(result != kHAPError_InProgress);
 
     HAPAccessoryServer* server = (HAPAccessoryServer*)_server;
@@ -83,6 +85,7 @@ HAPError HAPUInt8CharacteristicResponseReadRequest(
     HAPPrecondition(accessory);
     HAPPrecondition(service);
     HAPPrecondition(characteristic);
+    HAPPrecondition(characteristic->format == kHAPCharacteristicFormat_UInt8);
     HAPPrecondition(result != kHAPError_InProgress);
 
     HAPAccessoryServer* server = (HAPAccessoryServer*)_server;
@@ -112,6 +115,7 @@ HAPError HAPUInt16CharacteristicResponseReadRequest(
     HAPPrecondition(accessory);
     HAPPrecondition(service);
     HAPPrecondition(characteristic);
+    HAPPrecondition(characteristic->format == kHAPCharacteristicFormat_UInt16);
     HAPPrecondition(result != kHAPError_InProgress);
 
     HAPAccessoryServer* server = (HAPAccessoryServer*)_server;
@@ -141,6 +145,7 @@ HAPError HAPUInt32CharacteristicResponseReadRequest(
     HAPPrecondition(accessory);
     HAPPrecondition(service);
     HAPPrecondition(characteristic);
+    HAPPrecondition(characteristic->format == kHAPCharacteristicFormat_UInt32);
     HAPPrecondition(result != kHAPError_InProgress);
 
     HAPAccessoryServer* server = (HAPAccessoryServer*)_server;
@@ -170,6 +175,7 @@ HAPError HAPUInt64CharacteristicResponseReadRequest(
     HAPPrecondition(accessory);
     HAPPrecondition(service);
     HAPPrecondition(characteristic);
+    HAPPrecondition(characteristic->format == kHAPCharacteristicFormat_UInt64);
     HAPPrecondition(result != kHAPError_InProgress);
 
     HAPAccessoryServer* server = (HAPAccessoryServer*)_server;
@@ -199,6 +205,7 @@ HAPError HAPIntCharacteristicResponseReadRequest(
     HAPPrecondition(accessory);
     HAPPrecondition(service);
     HAPPrecondition(characteristic);
+    HAPPrecondition(characteristic->format == kHAPCharacteristicFormat_Int);
     HAPPrecondition(result != kHAPError_InProgress);
 
     HAPAccessoryServer* server = (HAPAccessoryServer*)_server;
@@ -228,6 +235,7 @@ HAPError HAPFloatCharacteristicResponseReadRequest(
     HAPPrecondition(accessory);
     HAPPrecondition(service);
     HAPPrecondition(characteristic);
+    HAPPrecondition(characteristic->format == kHAPCharacteristicFormat_Float);
     HAPPrecondition(result != kHAPError_InProgress);
 
     HAPAccessoryServer* server = (HAPAccessoryServer*)_server;
@@ -257,6 +265,7 @@ HAPError HAPStringCharacteristicResponseReadRequest(
     HAPPrecondition(accessory);
     HAPPrecondition(service);
     HAPPrecondition(characteristic);
+    HAPPrecondition(characteristic->format == kHAPCharacteristicFormat_String);
     HAPPrecondition(result != kHAPError_InProgress);
     if (result == kHAPError_None) {
         HAPPrecondition(value);
@@ -289,6 +298,7 @@ HAPError HAPTLV8CharacteristicResponseReadRequest(
     HAPPrecondition(accessory);
     HAPPrecondition(service);
     HAPPrecondition(characteristic);
+    HAPPrecondition(characteristic->format == kHAPCharacteristicFormat_TLV8);
     HAPPrecondition(result != kHAPError_InProgress);
     if (result == kHAPError_None) {
         HAPPrecondition(writer);
