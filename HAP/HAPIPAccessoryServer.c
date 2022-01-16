@@ -106,7 +106,7 @@ static const HAPLogObject logObject = { .subsystem = kHAP_LogSubsystem, .categor
 /**
  * Timeout for every event notifications progress.
  */
-#define kHAPIPAccessoryServer_EventNotificationTimeout ((HAPTime)(5 * HAPSecond))
+#define kHAPIPAccessoryServer_EventNotificationTimeout ((HAPTime)(10 * HAPSecond))
 
 static void HandleTCPStreamEvent(
         HAPPlatformTCPStreamManagerRef tcpStreamManager,
