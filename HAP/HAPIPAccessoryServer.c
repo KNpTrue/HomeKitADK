@@ -3423,6 +3423,9 @@ HAPError finsh_get_accessories(
 
     session->inProgress.numContexts--;
     HAPAssert(session->inProgress.numContexts == 0);
+    if (session->state == kHAPIPSessionState_Writing) {
+        return kHAPError_None;
+    }
     handle_accessory_serialization(session);
     if (session->state == kHAPIPSessionState_Writing) {
         HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
