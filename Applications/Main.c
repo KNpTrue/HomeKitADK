@@ -128,7 +128,7 @@ static void InitializePlatform() {
             &(const HAPPlatformMFiTokenAuthOptions) { .keyValueStore = &platform.keyValueStore });
 
     // Run loop.
-    HAPPlatformRunLoopCreate(&(const HAPPlatformRunLoopOptions) { .keyValueStore = &platform.keyValueStore });
+    HAPPlatformRunLoopCreate();
 
     platform.hapAccessoryServerOptions.maxPairings = kHAPPairingStorage_MinElements;
 

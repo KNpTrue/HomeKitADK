@@ -8,9 +8,7 @@
 
 #import <Foundation/Foundation.h>
 
-void HAPPlatformRunLoopCreate(const HAPPlatformRunLoopOptions* options) {
-    HAPPrecondition(options);
-    HAPPrecondition(options->keyValueStore);
+void HAPPlatformRunLoopCreate(void) {
 }
 
 void HAPPlatformRunLoopRelease(void) {

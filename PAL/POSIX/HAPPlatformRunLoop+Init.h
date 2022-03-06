@@ -27,19 +27,9 @@ extern "C" {
  */
 
 /**
- * Run loop initialization options.
- */
-typedef struct {
-    /**
-     * Key-value store.
-     */
-    HAPPlatformKeyValueStoreRef keyValueStore;
-} HAPPlatformRunLoopOptions;
-
-/**
  * Create run loop.
  */
-void HAPPlatformRunLoopCreate(const HAPPlatformRunLoopOptions* options);
+void HAPPlatformRunLoopCreate(void);
 
 /**
  * Release run loop.

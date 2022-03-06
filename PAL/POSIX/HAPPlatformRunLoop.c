@@ -464,9 +464,7 @@ static void HandleSelfPipeFileHandleCallback(
     }
 }
 
-void HAPPlatformRunLoopCreate(const HAPPlatformRunLoopOptions* options) {
-    HAPPrecondition(options);
-    HAPPrecondition(options->keyValueStore);
+void HAPPlatformRunLoopCreate(void) {
     HAPError err;
 
     HAPLogDebug(&logObject, "Storage configuration: runLoop = %lu", (unsigned long) sizeof runLoop);
