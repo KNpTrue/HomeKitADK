@@ -238,7 +238,7 @@ static bool AccessoryIsValid(const HAPAccessory* accessory) {
 
         if (service->linkedServices) {
             for (size_t j = 0; service->linkedServices[j]; j++) {
-                uint16_t linkedService = service->linkedServices[j];
+                uint64_t linkedService = service->linkedServices[j];
 
                 for (size_t k = 0; k < j; k++) {
                     if (linkedService == service->linkedServices[k]) {

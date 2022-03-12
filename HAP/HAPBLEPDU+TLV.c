@@ -662,6 +662,7 @@ HAPError HAPBLEPDUTLVSerializeHAPLinkedServices(const HAPService* _Nullable serv
     }
 
     for (size_t i = 0; i < linkedServicesCount; i++) {
+        HAPAssert(service->linkedServices[i] <= UINT16_MAX);
         HAPWriteLittleUInt16(&linkedServicesBytes[2 * i], service->linkedServices[i]);
     }
 

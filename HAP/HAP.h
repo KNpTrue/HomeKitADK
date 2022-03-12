@@ -3291,7 +3291,7 @@ struct HAPService {
      * - If linked services are used, a Service Signature characteristic must be attached to the service.
      *   This is only necessary if the accessory supports Bluetooth LE, but also okay for IP accessories.
      */
-    const uint16_t* _Nullable linkedServices;
+    const uint64_t* _Nullable linkedServices;
 
     /**
      * Array of contained characteristics. NULL-terminated.

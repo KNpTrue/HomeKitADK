@@ -639,7 +639,7 @@ HAPError HAPIPAccessorySerializeReadResponse(
                 APPEND_STRING_OR_RETURN_ERROR("[");
                 const HAPService* service = GET_CURRENT_SERVICE();
                 HAPAssert(service);
-                const uint16_t* linkedServices = service->linkedServices;
+                const uint64_t* linkedServices = service->linkedServices;
                 if (linkedServices) {
                     context->index = 0;
                     if (linkedServices[context->index]) {
@@ -665,7 +665,7 @@ HAPError HAPIPAccessorySerializeReadResponse(
             case kHAPIPAccessorySerializationState_LinkedServiceID_Value: {
                 const HAPService* service = GET_CURRENT_SERVICE();
                 HAPAssert(service);
-                const uint16_t* linkedServices = service->linkedServices;
+                const uint64_t* linkedServices = service->linkedServices;
                 HAPAssert(linkedServices);
                 HAPAssert(linkedServices[context->index]);
                 APPEND_UINT64_OR_RETURN_ERROR(linkedServices[context->index]);
