@@ -3533,7 +3533,7 @@ HAPError finsh_read_request(
     case kHAPIPSessionInProgressState_EventNotifications:
         return finsh_event_notifications(server, session, context);
     default:
-        HAPAssertionFailure();
+        HAPFatalError();
     }
 
     return kHAPError_Unknown;
