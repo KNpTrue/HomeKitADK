@@ -215,7 +215,7 @@ void HAPTLVWriterGetScratchBytes(
 /**
  * HomeKit Accessory server.
  */
-typedef HAP_OPAQUE(1904) HAPAccessoryServerRef;
+typedef HAP_OPAQUE(1896) HAPAccessoryServerRef;
 HAP_NONNULL_SUPPORT(HAPAccessoryServerRef)
 
 /**
@@ -4299,6 +4299,25 @@ void HAPAccessoryServerRaiseEventOnSession(
         const HAPCharacteristic* characteristic,
         const HAPService* service,
         const HAPAccessory* accessory,
+        HAPSessionRef* session);
+
+/**
+ * Raises an event notification for a given characteristic iid in a given service iid provided by
+ * a given accessory IID on a given session.
+ *
+ * When the session is NULL, it will raise on all sessions.
+ *
+ * @param      server               Accessory server.
+ * @param      cid                  The IID of the characteristic whose value has changed.
+ * @param      sid                  The IID of the service that contains the characteristic.
+ * @param      aid                  The IID of the accessory that provides the service.
+ * @param      session              The session on which to raise the event.
+ */
+void HAPAccessoryServerRaiseEventByIID(
+        HAPAccessoryServerRef* server,
+        uint64_t cid,
+        uint64_t sid,
+        uint64_t aid,
         HAPSessionRef* session);
 
 /**

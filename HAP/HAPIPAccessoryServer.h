@@ -103,6 +103,13 @@ struct HAPIPAccessoryServerTransport {
                 const HAPSessionRef* session);
 
         HAP_RESULT_USE_CHECK
+        HAPError (*raiseEventByIID)(
+                HAPAccessoryServerRef* server,
+                uint64_t iid,
+                uint64_t aid,
+                const HAPSessionRef* session);
+
+        HAP_RESULT_USE_CHECK
         HAPError (*responseWriteRequest)(
                 HAPAccessoryServerRef* server,
                 HAPSessionRef* session,

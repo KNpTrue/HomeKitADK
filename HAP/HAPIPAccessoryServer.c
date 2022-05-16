@@ -840,9 +840,8 @@ static size_t handle_characteristic_write_requests(
                 }
             }
             HAPAssert(server->ip.characteristicWriteRequestContext.ipSession);
-            server->ip.characteristicWriteRequestContext.characteristic = characteristic;
-            server->ip.characteristicWriteRequestContext.service = service;
-            server->ip.characteristicWriteRequestContext.accessory = accessory;
+            server->ip.characteristicWriteRequestContext.iid = context->aid;
+            server->ip.characteristicWriteRequestContext.aid = context->aid;
             const HAPBaseCharacteristic* baseCharacteristic = characteristic;
             if ((context->write.type != kHAPIPWriteValueType_None) &&
                 baseCharacteristic->properties.requiresTimedWrite && !timedWrite) {
@@ -867,9 +866,8 @@ static size_t handle_characteristic_write_requests(
                         dataBuffer);
             }
             server->ip.characteristicWriteRequestContext.ipSession = NULL;
-            server->ip.characteristicWriteRequestContext.characteristic = NULL;
-            server->ip.characteristicWriteRequestContext.service = NULL;
-            server->ip.characteristicWriteRequestContext.accessory = NULL;
+            server->ip.characteristicWriteRequestContext.iid = 0;
+            server->ip.characteristicWriteRequestContext.aid = 0;
         } else {
             context->status = kHAPIPAccessoryServerStatusCode_ResourceDoesNotExist;
         }
@@ -3213,25 +3211,15 @@ static HAPError engine_stop(HAPAccessoryServerRef* server_) {
 }
 
 HAP_RESULT_USE_CHECK
-static HAPError engine_raise_event_on_session_(
+static HAPError engine_raise_event_by_iid(
         HAPAccessoryServerRef* server_,
-        const HAPCharacteristic* characteristic_,
-        const HAPService* service_,
-        const HAPAccessory* accessory_,
-        const HAPSessionRef* securitySession_) {
+        uint64_t iid,
+        uint64_t aid,
+        const HAPSessionRef* session_) {
     HAPPrecondition(server_);
     HAPAccessoryServer* server = (HAPAccessoryServer*) server_;
-
-    HAPPrecondition(characteristic_);
-    HAPPrecondition(service_);
-    HAPPrecondition(accessory_);
-
     HAPError err;
-
     size_t events_raised = 0;
-
-    uint64_t aid = accessory_->aid;
-    uint64_t iid = ((const HAPBaseCharacteristic*) characteristic_)->iid;
 
     for (size_t i = 0; i < server->ip.storage->numSessions; i++) {
         HAPIPSession* ipSession = &server->ip.storage->sessions[i];
@@ -3239,7 +3227,7 @@ static HAPError engine_raise_event_on_session_(
         if (!session->server) {
             continue;
         }
-        if (securitySession_ && (securitySession_ != &session->securitySession.session)) {
+        if (session_ && (session_ != &session->securitySession.session)) {
             continue;
         }
         if (HAPSessionIsTransient(&session->securitySession.session)) {
@@ -3249,8 +3237,8 @@ static HAPError engine_raise_event_on_session_(
 
         if (session->inProgress.state == kHAPIPSessionInProgressState_PutCharacteristics) {
             HAPIPCharacteristicContext *ctx = get_ctx_by_iid(
-                    accessory_->aid,
-                    ((HAPBaseCharacteristic*) characteristic_)->iid,
+                    aid,
+                    iid,
                     session->contexts,
                     session->numContexts);
             if (ctx && ctx->status == kHAPIPAccessoryServerStatusCode_InPorgress) {
@@ -3259,9 +3247,8 @@ static HAPError engine_raise_event_on_session_(
         }
 
         if ((ipSession != server->ip.characteristicWriteRequestContext.ipSession) ||
-            (characteristic_ != server->ip.characteristicWriteRequestContext.characteristic) ||
-            (service_ != server->ip.characteristicWriteRequestContext.service) ||
-            (accessory_ != server->ip.characteristicWriteRequestContext.accessory)) {
+            (iid != server->ip.characteristicWriteRequestContext.iid) ||
+            (aid != server->ip.characteristicWriteRequestContext.aid)) {
             HAPAssert(session->numEventNotifications <= session->maxEventNotifications);
             size_t j = 0;
             while ((j < session->numEventNotifications) &&
@@ -3310,7 +3297,11 @@ static HAPError engine_raise_event(
     HAPPrecondition(service);
     HAPPrecondition(accessory);
 
-    return engine_raise_event_on_session_(server, characteristic, service, accessory, /* session: */ NULL);
+    return engine_raise_event_by_iid(
+            server,
+            ((const HAPBaseCharacteristic *)characteristic)->iid,
+            accessory->aid,
+            /* session: */ NULL);
 }
 
 HAP_RESULT_USE_CHECK
@@ -3326,7 +3317,11 @@ static HAPError engine_raise_event_on_session(
     HAPPrecondition(accessory);
     HAPPrecondition(session);
 
-    return engine_raise_event_on_session_(server, characteristic, service, accessory, session);
+    return engine_raise_event_by_iid(
+            server,
+            ((const HAPBaseCharacteristic *)characteristic)->iid,
+            accessory->aid,
+            session);
 }
 
 static HAP_RESULT_USE_CHECK
@@ -3937,6 +3932,7 @@ const HAPIPAccessoryServerTransport kHAPAccessoryServerTransport_IP = {
         .stop = engine_stop,
         .raiseEvent = engine_raise_event,
         .raiseEventOnSession = engine_raise_event_on_session,
+        .raiseEventByIID = engine_raise_event_by_iid,
         .responseWriteRequest = response_write_request,
         .responseDataReadRequest = response_data_read_request,
         .responseBoolReadRequest = response_bool_read_request,

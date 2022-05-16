@@ -1186,6 +1186,25 @@ void HAPAccessoryServerRaiseEventOnSession(
     }
 }
 
+void HAPAccessoryServerRaiseEventByIID(
+        HAPAccessoryServerRef* server_,
+        uint64_t cid,
+        uint64_t sid,
+        uint64_t aid,
+        HAPSessionRef* session) {
+    HAPPrecondition(server_);
+    HAPAccessoryServer* server = (HAPAccessoryServer*) server_;
+
+    HAPError err;
+
+    if (server->transports.ip) {
+        err = server->transports.ip->serverEngine.raiseEventByIID(server_, cid, aid, session);
+        if (err) {
+            HAPFatalError();
+        }
+    }
+}
+
 void HAPAccessoryServerHandleSubscribe(
         HAPAccessoryServerRef* server,
         HAPSessionRef* session_,

@@ -170,14 +170,11 @@ typedef struct {
             /** The session over which the request has been received. */
             const HAPIPSession* _Nullable ipSession;
 
-            /** The characteristic whose value is to be written. */
-            const HAPCharacteristic* _Nullable characteristic;
+            /** Accessory instance ID. */
+            uint64_t aid;
 
-            /** The service that contains the characteristic. */
-            const HAPService* _Nullable service;
-
-            /** The accessory that provides the service. */
-            const HAPAccessory* _Nullable accessory;
+            /** Characteristic instance ID. */
+            uint64_t iid;
         } characteristicWriteRequestContext;
 
         /** Timer that on expiry triggers a server state transition. */
