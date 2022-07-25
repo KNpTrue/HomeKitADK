@@ -591,6 +591,11 @@ extern "C" {
     }
 #endif
 
+/**
+ * Bit width of the platform.
+ */
+#define HAP_BIT_WIDTH (__SIZEOF_POINTER__ * 8)
+
 //----------------------------------------------------------------------------------------------------------------------
 
 #if __has_feature(nullability)

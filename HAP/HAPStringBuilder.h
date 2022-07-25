@@ -18,11 +18,6 @@ extern "C" {
 #endif
 
 /**
- * String builder.
- */
-typedef HAP_OPAQUE(32) HAPStringBuilderRef;
-
-/**
  * Initializes a string builder.
  *
  * @param[out] stringBuilder        String builder to initialize.

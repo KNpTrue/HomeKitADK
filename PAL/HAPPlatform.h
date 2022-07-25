@@ -12,6 +12,11 @@ extern "C" {
 #endif
 
 #include "HAPBase.h"
+#if HAP_BIT_WIDTH  == 32
+#include "HAPOpaqueTypes+32.h"
+#elif HAP_BIT_WIDTH == 64
+#include "HAPOpaqueTypes+64.h"
+#endif
 
 #include "HAPPlatformAbort.h"
 #include "HAPPlatformAccessorySetup.h"

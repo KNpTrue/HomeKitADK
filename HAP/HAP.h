@@ -109,11 +109,6 @@ typedef struct {
 } HAPTLV;
 
 /**
- * TLV Reader.
- */
-typedef HAP_OPAQUE(32) HAPTLVReaderRef;
-
-/**
  * Creates a new TLV reader.
  *
  * @param      reader               An uninitialized TLV reader.
@@ -161,12 +156,6 @@ HAP_RESULT_USE_CHECK
 HAPError HAPTLVReaderGetAll(HAPTLVReaderRef* reader, HAPTLV* _Nullable const* _Nonnull tlvs);
 
 /**
- * TLV Writer.
- */
-typedef HAP_OPAQUE(32) HAPTLVWriterRef;
-HAP_NONNULL_SUPPORT(HAPTLVWriterRef)
-
-/**
  * Creates a new TLV writer.
  *
  * @param      writer               An uninitialized TLV writer.
@@ -211,18 +200,6 @@ void HAPTLVWriterGetScratchBytes(
         const HAPTLVWriterRef* writer,
         void* _Nonnull* _Nonnull scratchBytes,
         size_t* numScratchBytes);
-
-/**
- * HomeKit Accessory server.
- */
-typedef HAP_OPAQUE(1896) HAPAccessoryServerRef;
-HAP_NONNULL_SUPPORT(HAPAccessoryServerRef)
-
-/**
- * HomeKit Session.
- */
-typedef HAP_OPAQUE(424) HAPSessionRef;
-HAP_NONNULL_SUPPORT(HAPSessionRef)
 
 /**
  * Formats that HomeKit characteristics can have.
@@ -3569,21 +3546,6 @@ HAP_NONNULL_SUPPORT(HAPAccessory)
 #define kHAPPairingStorage_MinElements ((HAPPlatformKeyValueStoreKey) 16)
 
 /**
- * IP request context.
- */
-typedef HAP_OPAQUE(64) HAPIPCharacteristicContextRef;
-
-/**
- * IP session descriptor.
- */
-typedef HAP_OPAQUE(832) HAPIPSessionDescriptorRef;
-
-/**
- * IP event notification.
- */
-typedef HAP_OPAQUE(24) HAPIPEventNotificationRef;
-
-/**
  * Default size for the inbound buffer of an IP session.
  */
 #define kHAPIPSession_DefaultInboundBufferSize ((size_t) 32768)
@@ -3735,33 +3697,9 @@ HAP_NONNULL_SUPPORT(HAPIPAccessoryServerTransport)
 /**@}*/
 
 /**
- * Element of the BLE GATT table.
- *
- * - For accessories that support Bluetooth LE, at least one of these elements must be allocated per HomeKit
- *   characteristic and service, and provided as part of a HAPBLEAccessoryServerStorage structure.
- */
-typedef HAP_OPAQUE(56) HAPBLEGATTTableElementRef;
-
-/**
  * Minimum number of BLE session cache elements in a HAPBLEAccessoryServerStorage.
  */
 #define kHAPBLESessionCache_MinElements ((size_t) 8)
-
-/**
- * Element of the BLE Pair Resume session cache.
- *
- * - For accessories that support Bluetooth LE, at least kHAPBLESessionCache_MinElements
- *   of these elements must be allocated and provided as part of a HAPBLEAccessoryServerStorage structure.
- */
-typedef HAP_OPAQUE(48) HAPBLESessionCacheElementRef;
-
-/**
- * HAP-BLE procedure.
- *
- * - For accessories that support Bluetooth LE, at least one of these procedures must be allocated
- *   and provided as part of a HAPBLEAccessoryServerStorage structure.
- */
-typedef HAP_OPAQUE(160) HAPBLEProcedureRef;
 
 /**
  * BLE accessory server storage.

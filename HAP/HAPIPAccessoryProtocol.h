@@ -45,6 +45,22 @@ typedef struct {
     /** Accessory server status code. */
     int32_t status;
 
+    union {
+        struct {
+            bool ev;
+        } read;
+        struct {
+            bool remote;
+            bool response;
+            HAPIPWriteValueType type;
+            HAPIPEventNotificationState ev;
+            struct {
+                char* _Nullable bytes;
+                size_t numBytes;
+            } authorizationData;
+        } write;
+    };
+
     /** Characteristic value. */
     union {
         int32_t intValue;
@@ -55,22 +71,6 @@ typedef struct {
             size_t numBytes;
         } stringValue;
     } value;
-
-    union {
-        struct {
-            bool ev;
-        } read;
-        struct {
-            HAPIPWriteValueType type;
-            HAPIPEventNotificationState ev;
-            bool remote;
-            bool response;
-            struct {
-                char* _Nullable bytes;
-                size_t numBytes;
-            } authorizationData;
-        } write;
-    };
 } HAPIPCharacteristicContext;
 HAP_STATIC_ASSERT(
         sizeof(HAPIPCharacteristicContextRef) >= sizeof(HAPIPCharacteristicContext), HAPIPCharacteristicContext);
