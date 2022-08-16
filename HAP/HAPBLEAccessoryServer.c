@@ -45,6 +45,14 @@ static void Create(HAPAccessoryServerRef* server_, const HAPAccessoryServerOptio
 static void ValidateAccessory(const HAPAccessory* accessory) {
     HAPPrecondition(accessory);
 
+    // Work around iOS Bluetooth limitations.
+    // "The Local Name should match the accessory's markings and packaging and not contain ':' or ';'."
+    // See Accessory Design Guidelines for Apple Devices R7
+    // Section 11.4 Advertising Data
+    for (const char* c = accessory->name; *c; c++) {
+        HAPPrecondition(*c != ':' && *c != ';');
+    }
+
     if (accessory->services) {
         for (size_t i = 0; accessory->services[i]; i++) {
             const HAPService* service = accessory->services[i];

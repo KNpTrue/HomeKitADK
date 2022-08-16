@@ -20,13 +20,12 @@ extern "C" {
 /**
  * Validates a regular (Bluetooth LE / IP) accessory definition.
  *
- * @param      server               Accessory server.
  * @param      accessory            Accessory to validate.
  *
  * @return true                     If the accessory definition is valid.
  * @return false                    Otherwise.
  */
-bool HAPRegularAccessoryIsValid(HAPAccessoryServerRef* server, const HAPAccessory* accessory);
+bool HAPRegularAccessoryIsValid(const HAPAccessory* accessory);
 
 /**
  * Validates a bridged accessory definition.

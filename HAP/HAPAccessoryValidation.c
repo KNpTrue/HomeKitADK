@@ -748,9 +748,7 @@ static bool AccessoryIsValid(const HAPAccessory* accessory) {
     return true;
 }
 
-bool HAPRegularAccessoryIsValid(HAPAccessoryServerRef* server_, const HAPAccessory* accessory) {
-    HAPPrecondition(server_);
-    HAPAccessoryServer* server = (HAPAccessoryServer*) server_;
+bool HAPRegularAccessoryIsValid(const HAPAccessory* accessory) {
     HAPPrecondition(accessory);
     HAPPrecondition(accessory->name);
 
@@ -764,19 +762,6 @@ bool HAPRegularAccessoryIsValid(HAPAccessoryServerRef* server_, const HAPAccesso
         HAPLogAccessoryError(
                 &logObject, accessory, "Invalid accessory category has been selected (%u).", accessory->category);
         return false;
-    }
-
-    // Validate BLE specific requirements.
-    if (server->transports.ble) {
-        // Work around iOS Bluetooth limitations.
-        // "The Local Name should match the accessory's markings and packaging and not contain ':' or ';'."
-        // See Accessory Design Guidelines for Apple Devices R7
-        // Section 11.4 Advertising Data
-        for (const char* c = accessory->name; *c; c++) {
-            if (*c == ':' || *c == ';') {
-                HAPLogAccessoryError(&logObject, accessory, "The accessory name should not contain ':' or ';'.");
-            }
-        }
     }
 
     if (!AccessoryIsValid(accessory)) {

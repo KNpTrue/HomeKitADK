@@ -610,7 +610,7 @@ void HAPAccessoryServerStart(HAPAccessoryServerRef* server_, const HAPAccessory*
             &logObject,
             "Checking accessory definition. "
             "If this crashes, verify that service and characteristic lists are properly NULL-terminated.");
-    HAPPrecondition(HAPRegularAccessoryIsValid(server_, accessory));
+    HAPPrecondition(HAPRegularAccessoryIsValid(accessory));
     HAPLogDebug(&logObject, "Accessory definition ok.");
 
     // Check Bluetooth LE requirements.
@@ -645,7 +645,7 @@ void HAPAccessoryServerStartBridge(
             &logObject,
             "Checking accessory definition. "
             "If this crashes, verify that accessory, service and characteristic lists are properly NULL-terminated.");
-    HAPPrecondition(HAPRegularAccessoryIsValid(server_, bridgeAccessory));
+    HAPPrecondition(HAPRegularAccessoryIsValid(bridgeAccessory));
     if (bridgedAccessories) {
         size_t i;
         for (i = 0; bridgedAccessories[i]; i++) {
