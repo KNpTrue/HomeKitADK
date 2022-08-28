@@ -2485,7 +2485,7 @@ static void handle_input(HAPIPSessionDescriptor* session) {
     }
 }
 
-static void finsh_write_event_notifications(
+static void finish_write_event_notifications(
         HAPIPSessionDescriptor* session,
         HAPIPCharacteristicContextRef* contexts,
         size_t numContexts) {
@@ -2566,7 +2566,7 @@ void event_notification_timeout_timer(HAPPlatformTimerRef timer, void* _Nullable
     }
     session->inProgress.numContexts = 0;
     session->inProgress.state = kHAPIPSessionInProgressState_None;
-    finsh_write_event_notifications(session, session->contexts, session->numContexts);
+    finish_write_event_notifications(session, session->contexts, session->numContexts);
     if (session->state == kHAPIPSessionState_Writing) {
         HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
         HAPPlatformTCPStreamUpdateInterests(
@@ -2676,7 +2676,7 @@ static void write_event_notifications(HAPIPSessionDescriptor* session) {
                     HAPFatalError();
                 }
             } else {
-                finsh_write_event_notifications(session, session->contexts, session->numContexts);
+                finish_write_event_notifications(session, session->contexts, session->numContexts);
             }
             if (session->state == kHAPIPSessionState_Writing) {
                 HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
@@ -3325,7 +3325,7 @@ static HAPError engine_raise_event_on_session(
 }
 
 static HAP_RESULT_USE_CHECK
-HAPError finsh_put_characteristics(
+HAPError finish_put_characteristics(
         HAPAccessoryServer* server,
         HAPIPSessionDescriptor* session,
         HAPIPCharacteristicContext* context) {
@@ -3367,7 +3367,7 @@ HAPError finsh_put_characteristics(
 }
 
 static HAP_RESULT_USE_CHECK
-HAPError finsh_get_characteristics(
+HAPError finish_get_characteristics(
         HAPAccessoryServer* server,
         HAPIPSessionDescriptor* session,
         HAPIPCharacteristicContext* context) {
@@ -3408,7 +3408,7 @@ HAPError finsh_get_characteristics(
 }
 
 static HAP_RESULT_USE_CHECK
-HAPError finsh_get_accessories(
+HAPError finish_get_accessories(
         HAPAccessoryServer* server,
         HAPIPSessionDescriptor* session,
         HAPIPCharacteristicContext* context) {
@@ -3435,7 +3435,7 @@ HAPError finsh_get_accessories(
 }
 
 static HAP_RESULT_USE_CHECK
-HAPError finsh_event_notifications(
+HAPError finish_event_notifications(
         HAPAccessoryServer* server,
         HAPIPSessionDescriptor* session,
         HAPIPCharacteristicContext* context) {
@@ -3453,7 +3453,7 @@ HAPError finsh_event_notifications(
     session->inProgress.timer = 0;
 
     session->inProgress.state = kHAPIPSessionInProgressState_None;
-    finsh_write_event_notifications(session, session->contexts, session->numContexts);
+    finish_write_event_notifications(session, session->contexts, session->numContexts);
     if (session->state == kHAPIPSessionState_Writing) {
         HAPPlatformTCPStreamEvent interests = { .hasBytesAvailable = false, .hasSpaceAvailable = true };
         HAPPlatformTCPStreamUpdateInterests(
@@ -3510,23 +3510,23 @@ HAPError response_write_request(
         return kHAPError_None;
     }
 
-    return finsh_put_characteristics(server, session, context);
+    return finish_put_characteristics(server, session, context);
 }
 
 static HAP_RESULT_USE_CHECK
-HAPError finsh_read_request(
+HAPError finish_read_request(
         HAPAccessoryServer* server,
         HAPIPSessionDescriptor* session,
         HAPIPCharacteristicContext* context) {
     switch (session->inProgress.state) {
     case kHAPIPSessionInProgressState_GetAccessories:
-        return finsh_get_accessories(server, session, context);
+        return finish_get_accessories(server, session, context);
     case kHAPIPSessionInProgressState_PutCharacteristics:
-        return finsh_put_characteristics(server, session, context);
+        return finish_put_characteristics(server, session, context);
     case kHAPIPSessionInProgressState_GetCharacteristics:
-        return finsh_get_characteristics(server, session, context);
+        return finish_get_characteristics(server, session, context);
     case kHAPIPSessionInProgressState_EventNotifications:
-        return finsh_event_notifications(server, session, context);
+        return finish_event_notifications(server, session, context);
     default:
         HAPFatalError();
     }
@@ -3576,7 +3576,7 @@ HAPError response_data_read_request(
                 (HAPIPCharacteristicContextRef*) context, &session->scratchBuffer, valueBytes, numValueBytes);
     }
 
-    return finsh_read_request(server, session, context);
+    return finish_read_request(server, session, context);
 }
 
 static HAP_RESULT_USE_CHECK
@@ -3617,7 +3617,7 @@ HAPError response_bool_read_request(
                 (HAPIPCharacteristicContextRef*) context, value ? 1 : 0);
     }
 
-    return finsh_read_request(server, session, context);
+    return finish_read_request(server, session, context);
 }
 
 static HAP_RESULT_USE_CHECK
@@ -3658,7 +3658,7 @@ HAPError response_uint_read_request(
                 (HAPIPCharacteristicContextRef*) context, value);
     }
 
-    return finsh_read_request(server, session, context);
+    return finish_read_request(server, session, context);
 }
 
 static HAP_RESULT_USE_CHECK
@@ -3747,7 +3747,7 @@ HAPError response_int_read_request(
                 (HAPIPCharacteristicContextRef*) context, value);
     }
 
-    return finsh_read_request(server, session, context);
+    return finish_read_request(server, session, context);
 }
 
 static HAP_RESULT_USE_CHECK
@@ -3788,7 +3788,7 @@ HAPError response_float_read_request(
                 (HAPIPCharacteristicContextRef*) context, value);
     }
 
-    return finsh_read_request(server, session, context);
+    return finish_read_request(server, session, context);
 }
 
 static HAP_RESULT_USE_CHECK
@@ -3832,7 +3832,7 @@ HAPError response_string_read_request(
                 (HAPIPCharacteristicContextRef*) context, &session->scratchBuffer, value);
     }
 
-    return finsh_read_request(server, session, context);
+    return finish_read_request(server, session, context);
 }
 
 static HAP_RESULT_USE_CHECK
@@ -3876,7 +3876,7 @@ HAPError response_tlv8_read_request(
                 (HAPIPCharacteristicContextRef*) context, &session->scratchBuffer, writer);
     }
 
-    return finsh_read_request(server, session, context);
+    return finish_read_request(server, session, context);
 }
 
 static void Create(HAPAccessoryServerRef* server_, const HAPAccessoryServerOptions* options) {
