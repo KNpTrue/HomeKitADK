@@ -13,12 +13,14 @@ HAPPlatformLogEnabledTypes HAPPlatformLogGetEnabledTypes(const HAPLogObject* log
     return kHAPPlatformLogEnabledTypes_Debug;
 }
 
+HAP_PRINTFLIKE(5, 0)
 void HAPPlatformLogCapture(
         const HAPLogObject* log,
         HAPLogType type,
-        const char* message,
         const void* _Nullable bufferBytes,
-        size_t numBufferBytes) HAP_DIAGNOSE_ERROR(!bufferBytes && numBufferBytes, "empty buffer cannot have a length") {
+        size_t numBufferBytes,
+        const char* format,
+        va_list args) HAP_DIAGNOSE_ERROR(!bufferBytes && numBufferBytes, "empty buffer cannot have a length") {
     // Color.
     switch (type) {
         case kHAPLogType_Debug: {
@@ -79,7 +81,7 @@ void HAPPlatformLogCapture(
     }
 
     // Message.
-    (void) fprintf(stderr, "%s", message);
+    (void) vfprintf(stderr, format, args);
     (void) fprintf(stderr, "\n");
 
     // Buffer.

@@ -24,8 +24,6 @@ static void
                 HAPLogType type,
                 const char* format,
                 va_list args) {
-    HAPError err;
-
     if (!log) {
         return;
     }
@@ -50,18 +48,8 @@ static void
         } break;
     }
 
-    // Format log message.
-    char message[kHAPLogMessage_MaxBytes];
-    HAPRawBufferZero(message, sizeof message);
-
-    err = HAPStringWithFormatAndArguments(message, sizeof message, format, args);
-    if (err) {
-        HAPPlatformLogCapture(log, kHAPLogType_Error, "<Log message too long>", NULL, 0);
-        return;
-    }
-
     // Capture log.
-    HAPPlatformLogCapture(log, type, message, bytes, numBytes);
+    HAPPlatformLogCapture(log, type, bytes, numBytes, format, args);
 }
 
 HAP_PRINTFLIKE(4, 5)

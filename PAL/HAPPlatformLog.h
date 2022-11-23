@@ -71,16 +71,19 @@ HAPPlatformLogEnabledTypes HAPPlatformLogGetEnabledTypes(const HAPLogObject* log
  *
  * @param      log                  Log object.
  * @param      type                 Logging level.
- * @param      message              A log message. NULL-terminated.
  * @param      bufferBytes          Optional buffer containing related data to log.
  * @param      numBufferBytes       Length of buffer.
+ * @param      format               A format string.
+ * @param      args                 Arguments for the format string.
  */
+HAP_PRINTFLIKE(5, 0)
 void HAPPlatformLogCapture(
         const HAPLogObject* log,
         HAPLogType type,
-        const char* message,
         const void* _Nullable bufferBytes,
-        size_t numBufferBytes) HAP_DIAGNOSE_ERROR(!bufferBytes && numBufferBytes, "empty buffer cannot have a length");
+        size_t numBufferBytes,
+        const char* format,
+        va_list args) HAP_DIAGNOSE_ERROR(!bufferBytes && numBufferBytes, "empty buffer cannot have a length");
 
 #if __has_feature(nullability)
 #pragma clang assume_nonnull end
