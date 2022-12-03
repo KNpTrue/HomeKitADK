@@ -281,7 +281,7 @@ void ed25519_Blinding_Init(
 
     /* Use edp_custom_blinding to protect generation of the new blinder */
 
-    mbedtls_sha512_context sha_ctx;
+    mbedtls_md_context_t sha_ctx;
     sha512_init(&sha_ctx);
     sha512_update(&sha_ctx, (const uint8_t*) edp_custom_blinding.zr, 32);
     sha512_update(&sha_ctx, seed, size);
@@ -349,7 +349,7 @@ void ed25519_SignMessage(
     ecp_BytesToWords(a, md);
 
     /* r = H(b + m) mod BPO */
-    mbedtls_sha512_context ctx;
+    mbedtls_md_context_t ctx;
     sha512_init(&ctx);
     sha512_update(&ctx, md + 32, 32);
     sha512_update(&ctx, msg, msg_size);

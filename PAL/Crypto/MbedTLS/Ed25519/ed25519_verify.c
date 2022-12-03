@@ -291,7 +291,7 @@ int ed25519_Verify_Check(
     U8 md[SHA512_DIGEST_LENGTH];
 
     /* h = H(enc(R) + pk + m)  mod BPO */
-    mbedtls_sha512_context ctx;
+    mbedtls_md_context_t ctx;
     sha512_init(&ctx);
     sha512_update(&ctx, signature, 32); /* enc(R) */
     sha512_update(&ctx, ((EDP_SIGV_CTX*) context)->pk, 32);
