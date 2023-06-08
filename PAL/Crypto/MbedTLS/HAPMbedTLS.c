@@ -526,6 +526,10 @@ void HAP_pbkdf2_hmac_sha1(
         const uint8_t* salt,
         size_t salt_len,
         uint32_t count) {
+#if (MBEDTLS_VERSION_NUMBER >= 0x03030000)
+    int ret = mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA1, password, password_len, salt, salt_len, count, key_len, key);
+    HAPAssert(ret == 0);
+#else
     mbedtls_md_context_t ctx;
     mbedtls_md_init(&ctx);
     int ret = mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA1), 1);
@@ -535,6 +539,7 @@ void HAP_pbkdf2_hmac_sha1(
     ret = mbedtls_pkcs5_pbkdf2_hmac(&ctx, password, password_len, salt, salt_len, count, key_len, key);
     HAPAssert(ret == 0);
     mbedtls_md_free(&ctx);
+#endif
 }
 
 typedef struct {
